@@ -1,22 +1,24 @@
-from pydantic import BaseModel, Field
 from typing import List, Optional
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class ChatMessage(BaseModel):
     role: str
     text: str
 
+
 class UserProfile(BaseModel):
-    favorite_genres: List[str] = Field(default=[])
-    disliked_genres: List[str] = Field(default=[])
-    preferred_eras: List[str] = Field(default=[])
-    taste_description: Optional[str] = Field(default=None)
+    favorite_genres: List[str] = Field(default_factory=list)
+    disliked_genres: List[str] = Field(default_factory=list)
+    preferred_eras: List[str] = Field(default_factory=list)
+    taste_description: Optional[str] = None
+
 
 class MoodRequest(BaseModel):
     mood_text: str
-    chat_history: List[ChatMessage] = Field(default=[])
+    chat_history: List[ChatMessage] = Field(default_factory=list)
     user_profile: Optional[UserProfile] = None
-    displayed_movie_ids: Optional[List[int]] = Field(default=[])
+    displayed_movie_ids: Optional[List[int]] = Field(default_factory=list)
 
 
 class MovieCard(BaseModel):
@@ -31,10 +33,11 @@ class MovieCard(BaseModel):
     poster_path: Optional[str] = None
     hybrid_summary: str
 
+
 class ChattedRecommendationResponse(BaseModel):
     is_context_sufficient: bool
     ai_followup_chat: str
-    recommendations: List[MovieCard] = Field(default=[])
+    recommendations: List[MovieCard] = Field(default_factory=list)
 
 
 class UserCreate(BaseModel):
@@ -47,15 +50,14 @@ class UserLogin(BaseModel):
     username: str
     password: str
 
+
 class UserResponse(BaseModel):
     id: int
     username: str
     email: str
     watcher_tier: str
 
-    class Config:
-        from_attributes = True
-
+    model_config = ConfigDict(from_attributes=True)
 
 
 class WatchlistAction(BaseModel):
@@ -69,6 +71,7 @@ class WatchedAction(BaseModel):
     rating: Optional[float] = None
     critic_review: Optional[str] = None
 
+
 class DislikeAction(BaseModel):
     user_id: int
     movie_id: int
@@ -76,5 +79,9 @@ class DislikeAction(BaseModel):
 
 
 class CompiledContextPayload(BaseModel):
-    dense_search_query: str = Field(description="The flattened, dense semantic search paragraph capturing all turns of historical and current conversation parameters.")
-    should_bypass_profile: bool = Field(description="Set to true if the user explicitly or implicitly states they want something new, an override, a shift away from their usual taste profile, or an exploration of alternative genres.")
+    dense_search_query: str = Field(
+        description="Dense continuous paragraph summarizing thematic, atmospheric, and stylistic preferences."
+    )
+    should_bypass_profile: bool = Field(
+        description="True if the user requests something outside their typical taste profile."
+    )

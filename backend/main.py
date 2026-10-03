@@ -5,15 +5,14 @@ from contextlib import asynccontextmanager
 from typing import Optional, List
 
 from dotenv import load_dotenv
-
-load_dotenv()
-
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 from google import genai
 from google.genai import types
+
+load_dotenv()
 
 from schemas import (
     MoodRequest,
@@ -32,14 +31,9 @@ from ai_service import ai_engine
 import database
 import models
 
-# Initialize Gemini Client
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if not GEMINI_API_KEY:
-    print("[Warning] GEMINI_API_KEY is not set in environment or .env file.")
-genai_client = genai.Client(api_key=GEMINI_API_KEY)
+genai_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-# Gemini Model Fallback Cascade: if one model experiences high demand (503) or is deprecated (404),
-# the system automatically tries the next model in sequence.
+# Cascade across available Gemini models if temporary 503 or 429 occurs
 GEMINI_MODELS = [
     "gemini-3.5-flash-lite",
     "gemini-3.5-flash",
@@ -49,7 +43,6 @@ GEMINI_MODELS = [
 
 
 def generate_gemini_content(contents, config=None):
-    """Executes a generate_content request with automatic model fallback."""
     last_error = None
     for model_name in GEMINI_MODELS:
         try:
@@ -61,16 +54,12 @@ def generate_gemini_content(contents, config=None):
         except Exception as err:
             last_error = err
             error_str = str(err)
-            # If rate limited (429), unavailable (503), or not found (404), try fallback
-            if "503" in error_str or "404" in error_str or "429" in error_str or "UNAVAILABLE" in error_str:
-                print(f"[Gemini] Model '{model_name}' returned error ({err}). Trying fallback...")
+            if any(code in error_str for code in ["503", "404", "429", "UNAVAILABLE"]):
                 continue
-            # For schema validation or client errors not model-specific, raise immediately
             raise err
     raise last_error
 
 
-# Recommendation algorithm tuning parameters
 ALGORITHM_CONFIG = {
     "MIN_RATING": 6.0,
     "MIN_VOTES": 300,
@@ -103,7 +92,7 @@ CONCIERGE_SYSTEM_INSTRUCTION = (
     "and a candidate pool of mathematically matching movies from the local database.\n\n"
     "YOUR OBJECTIVE IS TO EXECUTE A SINGLE PASS EVALUATION:\n\n"
     "1. Context Sufficiency Check:\n"
-    "   If the conversation lacks enough context (e.g. give me a movie), set is_context_sufficient = false. "
+    "   If the conversation lacks enough context (e.g. 'give me a movie'), set is_context_sufficient = false. "
     "   Ask targeted questions in ai_followup_chat. Leave recommendations empty.\n"
     "   If the context is concrete enough to pick films, set is_context_sufficient = true.\n\n"
     "2. Dynamic Profile Override and Selection (only if is_context_sufficient is true):\n"
@@ -119,10 +108,8 @@ CONCIERGE_SYSTEM_INSTRUCTION = (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("[FlickFind] Starting up AI vector engine...")
     ai_engine.load_model()
     yield
-    print("[FlickFind] Shutting down.")
 
 
 app = FastAPI(title="FlickFind API", version="1.0.0", lifespan=lifespan)
@@ -136,27 +123,24 @@ app.add_middleware(
 )
 
 
-# --- Health & Diagnostic Endpoints ---
+# --- Health ---
 
 @app.get("/")
 async def root():
-    return {"status": "online", "message": "FlickFind Cinematic API Active"}
+    return {"status": "online", "message": "FlickFind API Active"}
 
 
 @app.get("/api/v1/health/db")
 async def check_database_health(db: Session = Depends(database.get_db)):
     try:
         db.execute(text("SELECT 1"))
-        movie_count = db.query(models.Movie).count()
-        return {
-            "database_status": "connected",
-            "movies_indexed": movie_count,
-        }
+        count = db.query(models.Movie).count()
+        return {"database_status": "connected", "movies_indexed": count}
     except Exception as e:
         return {"database_status": "disconnected", "error": str(e)}
 
 
-# --- Authentication Endpoints ---
+# --- Auth ---
 
 @app.post("/api/v1/auth/register", response_model=UserResponse)
 async def register_user(user_data: UserCreate, db: Session = Depends(database.get_db)):
@@ -173,7 +157,6 @@ async def register_user(user_data: UserCreate, db: Session = Depends(database.ge
         watcher_tier="BASIC_WATCHER",
         persona_vector_data=[0.0] * 768,
     )
-
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
@@ -183,19 +166,18 @@ async def register_user(user_data: UserCreate, db: Session = Depends(database.ge
 @app.post("/api/v1/auth/login")
 async def login_user(credentials: UserLogin, db: Session = Depends(database.get_db)):
     user = db.query(models.User).filter(models.User.username == credentials.username).first()
-
     if not user or not verify_user_password(credentials.password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Invalid username or password.")
 
     return {
-        "message": "Authentication successful!",
+        "message": "Authentication successful",
         "user_id": user.id,
         "username": user.username,
         "watcher_tier": user.watcher_tier,
     }
 
 
-# --- User Engagement Endpoints ---
+# --- User Engagement ---
 
 @app.post("/api/v1/user/watchlist", status_code=200)
 async def toggle_watchlist_item(action: WatchlistAction, db: Session = Depends(database.get_db)):
@@ -224,7 +206,6 @@ async def get_user_watchlist(user_id: int, db: Session = Depends(database.get_db
             .order_by(models.UserWatchlist.added_at.desc())
             .all()
         )
-
         return [
             MovieCard(
                 id=m.id,
@@ -257,7 +238,7 @@ async def log_watched_movie(action: WatchedAction, db: Session = Depends(databas
     movie = db.query(models.Movie).filter(models.Movie.id == action.movie_id).first()
 
     if user and movie and movie.mood_vector_data is not None:
-        # Exponential Moving Average (EMA): shift persona vector 15% toward the watched movie
+        # EMA: shift persona vector 15% toward the watched movie
         LEARNING_RATE = 0.15
         if user.persona_vector_data is None:
             user.persona_vector_data = [0.0] * 768
@@ -267,7 +248,6 @@ async def log_watched_movie(action: WatchedAction, db: Session = Depends(databas
             for u, m in zip(list(user.persona_vector_data), list(movie.mood_vector_data))
         ]
 
-        # Progressive Watcher Tier Gamification
         total_watched = db.query(models.UserWatchedHistory).filter(
             models.UserWatchedHistory.user_id == action.user_id
         ).count()
@@ -312,14 +292,14 @@ async def log_disliked_movie(action: DislikeAction, db: Session = Depends(databa
                 ]
                 db.commit()
 
-        return {"status": "success", "message": "Dislike recorded and preference profile updated."}
+        return {"status": "success", "message": "Dislike recorded and preference updated."}
 
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Dislike tracking failed: {str(e)}")
 
 
-# --- Dual-Pass Cinematic Recommendation Engine ---
+# --- Recommendations ---
 
 @app.post("/api/v1/recommend/mood", response_model=ChattedRecommendationResponse)
 async def analyze_mood_chat(
@@ -328,7 +308,6 @@ async def analyze_mood_chat(
     db: Session = Depends(database.get_db),
 ):
     try:
-        # Flatten chat history into a coherent conversational stream
         formatted_history = "".join(
             f"{msg.role.upper()}: {msg.text}\n" for msg in request.chat_history
         )
@@ -346,28 +325,23 @@ async def analyze_mood_chat(
         dense_query = compiler_result.dense_search_query.strip()
         bypass_profile = compiler_result.should_bypass_profile
 
-        # Embed the compiled query into a 768-dim vector using the AI engine
         query_vector = ai_engine.generate_vector(dense_query)
 
-        # Dynamic weights based on profile bypass
         pop_w = 0.0 if bypass_profile else ALGORITHM_CONFIG["POPULARITY_MULTIPLIER"]
         rat_w = 0.0 if bypass_profile else ALGORITHM_CONFIG["RATING_MULTIPLIER"]
 
-        # Retrieve long-term persona vector if logged in
         persona_vector = None
         if user_id and not bypass_profile:
             user = db.query(models.User).filter(models.User.id == user_id).first()
             if user and user.persona_vector_data and any(v != 0.0 for v in user.persona_vector_data):
                 persona_vector = user.persona_vector_data
 
-        # Candidate pool with quality gates
         movie_query = db.query(models.Movie).filter(
             models.Movie.runtime >= ALGORITHM_CONFIG["MIN_RUNTIME"],
             models.Movie.imdb_rating >= ALGORITHM_CONFIG["MIN_RATING"],
             models.Movie.imdb_votes >= ALGORITHM_CONFIG["MIN_VOTES"],
         )
 
-        # Exclusion filter: Never recommend movies the user previously disliked
         if user_id:
             disliked_ids = [
                 r[0] for r in db.query(models.UserDislikedFilter.movie_id)
@@ -377,11 +351,9 @@ async def analyze_mood_chat(
             if disliked_ids:
                 movie_query = movie_query.filter(~models.Movie.id.in_(disliked_ids))
 
-        # Anti-Echo filter: Never re-recommend movies already visible on screen in this session
         if request.displayed_movie_ids:
             movie_query = movie_query.filter(~models.Movie.id.in_(request.displayed_movie_ids))
 
-        # Vector distance scoring blended with user persona
         prompt_distance = models.Movie.mood_vector_data.cosine_distance(query_vector)
         if persona_vector is not None:
             pw = ALGORITHM_CONFIG["LONG_TERM_PERSONA_WEIGHT"]
@@ -401,7 +373,6 @@ async def analyze_mood_chat(
             .all()
         )
 
-        # Fallback: Relax quality filters if strict filters produce empty candidate list
         if not candidates:
             fallback = db.query(models.Movie)
             if request.displayed_movie_ids:
@@ -415,7 +386,6 @@ async def analyze_mood_chat(
                 recommendations=[],
             )
 
-        # Selection Diversity: Lock top-5 closest semantic matches, sample pool for remainder
         top_5 = candidates[:5]
         pool = candidates[5:]
         sampled = top_5 + random.sample(pool, min(len(pool), 25))
@@ -444,7 +414,7 @@ async def analyze_mood_chat(
             "Analyze the inputs above and output the final structured JSON package matching the response model."
         )
 
-        # Pass 2: Gemini Concierge crafts responses and personalized summaries
+        # Pass 2: Concierge selection and structured summary generation
         ai_response = generate_gemini_content(
             contents=generation_prompt,
             config=types.GenerateContentConfig(
@@ -456,7 +426,6 @@ async def analyze_mood_chat(
 
         result = ChattedRecommendationResponse.model_validate_json(ai_response.text)
 
-        # Analytics tracking: Increment hit_count for movies selected by AI
         if result.is_context_sufficient and result.recommendations:
             selected_ids = {m.id for m in result.recommendations}
             for movie in sampled:

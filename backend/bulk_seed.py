@@ -13,7 +13,6 @@ load_dotenv()
 
 
 def get_db_connection_params():
-    """Extract database connection credentials from DATABASE_URL or defaults."""
     db_url = os.getenv("DATABASE_URL")
     if db_url:
         parsed = urlparse(db_url)
@@ -56,7 +55,6 @@ INSERT_SQL = """
 
 
 def build_row(row):
-    """Parse and validate a single DataFrame row into a DB insert tuple. Returns None if invalid."""
     try:
         raw_embedding = row.embedding
         if isinstance(raw_embedding, str):
@@ -110,7 +108,7 @@ def build_row(row):
 
 def seed_database_complete_warehouse():
     if not os.path.exists(PARQUET_FILE):
-        print(f"Error: '{PARQUET_FILE}' not found. Please provide the parquet file.")
+        print(f"Error: '{PARQUET_FILE}' not found.")
         return
 
     start_time = time.time()
@@ -120,7 +118,6 @@ def seed_database_complete_warehouse():
     conn = psycopg2.connect(**db_config)
     cursor = conn.cursor()
 
-    print("Registering pgvector extension...")
     cursor.execute("CREATE EXTENSION IF NOT EXISTS vector;")
     conn.commit()
 
@@ -145,7 +142,7 @@ def seed_database_complete_warehouse():
         if rows:
             execute_values(cursor, INSERT_SQL, rows, page_size=1000)
             total_inserted += len(rows)
-            print(f"Ingested batch. Total so far: {total_inserted} records.")
+            print(f"Ingested batch: {total_inserted} total records.")
 
         del df, rows
         gc.collect()
@@ -155,7 +152,7 @@ def seed_database_complete_warehouse():
     conn.close()
 
     elapsed = time.time() - start_time
-    print(f"\nSeeding complete. {total_inserted} records inserted in {elapsed:.2f}s.")
+    print(f"Seeding complete: {total_inserted} records in {elapsed:.2f}s.")
 
 
 if __name__ == "__main__":
