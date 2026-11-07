@@ -5,8 +5,8 @@
     uv run python -m builder.mood import FILE.jsonl   # load profiles produced elsewhere (Kaggle)
     uv run python -m builder.mood bakeoff             # 50 films, local model vs Gemini, side by side
     uv run python -m builder.mood kaggle-upload       # inputs + prompt -> private Kaggle dataset
-    uv run python -m builder.mood kaggle-push [OFFSET LIMIT]  # start a GPU run on Kaggle
-    uv run python -m builder.mood kaggle-fetch [wait] # status; when ended, download + import (wait: until it ends)
+    uv run python -m builder.mood kaggle-push [OFFSET LIMIT|all MODEL]  # start a GPU run on Kaggle
+    uv run python -m builder.mood kaggle-fetch [wait] [27b] # status; when ended, download + import (wait: until it ends)
 
 Profiles live in data/cache/profiles.sqlite keyed by TMDB id, with a fingerprint of the input text:
 a film is only re-profiled when its synopsis, keywords, reviews or this prompt change.
@@ -152,7 +152,9 @@ def cmd_inputs(limit=None):
 
 
 def cmd_local(limit=None):
-    todo = list(pending())[:limit]
+    """Least-voted films first: the local model fills in from the end while Kaggle works from the top."""
+    votes = dict(duckdb.sql(f"SELECT tmdb_id, imdb_votes FROM '{BUILD / 'selected.parquet'}'").fetchall())
+    todo = sorted(pending(), key=lambda f: votes.get(f[0], 0))[:limit]
     model, start, batch, failed = os.environ["OLLAMA_MODEL"], time.time(), [], 0
     for i, (tmdb_id, text, fp) in enumerate(todo, 1):
         try:
@@ -182,6 +184,11 @@ def cmd_import(path):
 KAGGLE = BUILD / "kaggle"
 
 
+def kernel(big):
+    """27B runs get their own notebook, so they can run alongside a 4B run (pushing to a running notebook cancels it)."""
+    return f"{os.environ['KAGGLE_USERNAME']}/flickfind-mood-profiles" + ("-27b" if big else ""), "-27b" if big else ""
+
+
 def kaggle_cli(*args, check=True):
     return subprocess.run(["kaggle", *args], check=check, capture_output=True, text=True)
 
@@ -205,28 +212,32 @@ def cmd_kaggle_upload():
     print(f"dataset {ds_id} ready")
 
 
-def cmd_kaggle_push(offset="0", limit=None):
-    """Start a GPU run on Kaggle for films [offset, offset+limit) of the uploaded inputs."""
+def cmd_kaggle_push(offset="0", limit=None, model=None):
+    """Start a GPU run on Kaggle for films [offset, offset+limit) of the uploaded inputs (limit "all" = to the end)."""
     user = os.environ["KAGGLE_USERNAME"]
-    k = KAGGLE / "kernel"
+    kid, suffix = kernel("27B" in (model or "27B"))
+    k = KAGGLE / f"kernel{suffix}"
     k.mkdir(parents=True, exist_ok=True)
     script = (ROOT / "builder" / "kaggle_profile.py").read_text()
-    script = script.replace("OFFSET, LIMIT = 0, None", f"OFFSET, LIMIT = {int(offset)}, {limit and int(limit)}", 1)
+    limit = None if limit in (None, "all") else int(limit)
+    script = script.replace("OFFSET, LIMIT = 0, None", f"OFFSET, LIMIT = {int(offset)}, {limit}", 1)
+    if model:
+        script = script.replace('MODEL = "cyankiwi/Qwen3.8-27B-AWQ-INT4"', f'MODEL = "{model}"', 1)
     (k / "kaggle_profile.py").write_text(script)
     (k / "kernel-metadata.json").write_text(json.dumps({
-        "id": f"{user}/flickfind-mood-profiles", "title": "flickfind-mood-profiles",
+        "id": kid, "title": kid.split("/")[1],
         "code_file": "kaggle_profile.py", "language": "python", "kernel_type": "script",
         "is_private": True, "enable_gpu": True, "enable_internet": True, "machine_shape": "NvidiaTeslaT4",
         "dataset_sources": [f"{user}/flickfind-profile-inputs"]}))
     print(kaggle_cli("kernels", "push", "-p", str(k)).stdout)
 
 
-def cmd_kaggle_fetch(wait=False):
+def cmd_kaggle_fetch(wait=False, big=False):
     """Show the run's status; once it has ended, download its output and log, and import the profiles.
 
     wait: keep checking every minute until the run ends (used to chain runs unattended).
     """
-    kid = f"{os.environ['KAGGLE_USERNAME']}/flickfind-mood-profiles"
+    kid, suffix = kernel(big)
     while True:
         status = kaggle_cli("kernels", "status", kid, check=False).stdout.strip()
         ended = any(w in status.lower() for w in ("complete", "error", "cancel"))
@@ -235,13 +246,11 @@ def cmd_kaggle_fetch(wait=False):
         time.sleep(60)
     print(status, flush=True)
     if ended:
-        out = KAGGLE / "output"
+        out = KAGGLE / f"output{suffix}"
         shutil.rmtree(out, ignore_errors=True)
         kaggle_cli("kernels", "output", kid, "-p", str(out), "--force", check=False)
-        for log in out.glob("*.log"):  # Kaggle's run log: JSON lines of stdout/stderr
-            lines = [json.loads(x).get("data", "") for x in json.loads(log.read_text() or "[]")] \
-                if log.read_text().lstrip().startswith("[") else log.read_text().splitlines()
-            print("".join(lines)[-3000:])
+        for log in out.glob("*.log"):  # Kaggle's run log: a JSON list of {"data": <stdout/stderr text>}
+            print("".join(e.get("data", "") for e in json.loads(log.read_text() or "[]"))[-3000:])
         if (out / "profiles.jsonl").exists():
             cmd_import(out / "profiles.jsonl")
 
@@ -290,5 +299,5 @@ def cmd_bakeoff(*models, n=50, famous=False):
 if __name__ == "__main__":
     cmd, args = sys.argv[1], sys.argv[2:]
     {"inputs": cmd_inputs, "import": cmd_import, "bakeoff": lambda *a: cmd_bakeoff(*a), "kaggle-upload": cmd_kaggle_upload,
-     "kaggle-push": cmd_kaggle_push, "kaggle-fetch": lambda *a: cmd_kaggle_fetch(wait="wait" in a),
+     "kaggle-push": cmd_kaggle_push, "kaggle-fetch": lambda *a: cmd_kaggle_fetch(wait="wait" in a, big="27b" in a),
      "local": lambda *a: cmd_local(int(a[0]) if a else None)}[cmd](*args)
