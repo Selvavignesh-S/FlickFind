@@ -16,5 +16,6 @@ step() { echo "== $(date '+%F %T') $1"; shift; uv run python -W ignore -m "$@"; 
   step "mood profiles" builder.mood groq 300   # leftovers carry over to the next day
   step "vectors" builder.embed                 # CPU: a day's few hundred films take minutes
   step "catalog" builder.pack
+  step "backup" builder.backup || echo "backup failed or not set up; the catalog update above still stands"
   echo "== $(date '+%F %T') done"
 } >> data/build/daily.log 2>&1
