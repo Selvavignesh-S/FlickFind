@@ -45,8 +45,9 @@ export function FilmCard({ film, width, actions }: { film: Film; width: number; 
         <View style={[StyleSheet.absoluteFill, fade]} pointerEvents="none" />
         <View style={s.topRow} pointerEvents="none">
           {film.fit != null ? <Badge tone="glass" icon="sparkles" label={`${film.fit}/10 fit`} /> : <View />}
-          {status && <Badge tone="glass" icon={status === "watchlist" ? "bookmark" : status === "watched" ? "checkmark"
-            : "ban"} label={status === "watched" && film.library?.rating ? `${film.library.rating}★` : status} />}
+          {status ? <Badge tone="glass" icon={status === "watchlist" ? "bookmark" : status === "watched" ? "checkmark"
+            : "ban"} label={status === "watched" && film.library?.rating ? `${film.library.rating}★` : status} />
+            : film.beyond ? <Badge tone="glass" icon="globe-outline" label="New" /> : null}
         </View>
         {!!meta && <T v="mono" style={s.meta} pointerEvents="none">{meta}</T>}
         {open && !film.missing && (

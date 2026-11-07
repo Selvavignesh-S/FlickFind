@@ -6,6 +6,7 @@ Works on a partly filled TMDB cache too; the report says how much is covered.
 """
 import datetime
 import json
+import os
 import sqlite3
 from collections import Counter
 
@@ -13,7 +14,7 @@ import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from builder.common import BUILD
+from builder.common import BUILD, DATA
 from builder.imdb import MIN_VOTES
 from builder.tmdb import DB
 
@@ -70,9 +71,19 @@ def drop_reason(m, group, is_doc, votes, today):
     return None
 
 
+def web_finds():
+    """IMDb ids of films users found beyond the catalog (backend/beyond.py): they skip the vote floor."""
+    path = os.environ.get("FLICKFIND_DB", DATA / "flickfind.db")
+    try:
+        return {r[0] for r in sqlite3.connect(path).execute("SELECT imdb_id FROM web_finds WHERE imdb_id IS NOT NULL")}
+    except sqlite3.OperationalError:  # no app database or table yet
+        return set()
+
+
 def load():
     """Join IMDb candidates with cached TMDB matches; tag each film with why it is dropped, if it is."""
     found = {k: json.loads(v) for k, v in sqlite3.connect(DB).execute("SELECT imdb_id, body FROM find")}
+    wanted = web_finds()
     today = datetime.date.today()
     rows = []
     for c in duckdb.sql(f"SELECT * FROM '{BUILD / 'imdb_candidates.parquet'}'").fetchall():
@@ -85,6 +96,8 @@ def load():
         is_doc = TMDB_DOCUMENTARY in genres or "Documentary" in (imdb_genres or "")
         group = group_of(m.get("original_language"))
         drop = drop_reason(m, group, is_doc, votes, today)
+        if drop == "below vote floor" and imdb_id in wanted:  # someone searched for it: in, whatever its votes
+            drop = None
         rows.append(dict(imdb_id=imdb_id, tmdb_id=m.get("id"), title=title, year=year,
                          title_type=title_type, runtime=runtime, language=m.get("original_language"),
                          released=m.get("release_date"),

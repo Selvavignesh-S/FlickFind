@@ -15,6 +15,7 @@ interface Turn {
   notes?: string[]; // e.g. a director who isn't in the catalog
   question?: string | null; options?: string[]; // a clarifying question, when the request was too vague
   noQuestions?: boolean; // "Just show me something": search with the best guess, ask nothing
+  beyond?: "busy" | "done"; // the search past the catalog (TMDB + the web), run on request
 }
 interface Answer {
   films: Film[]; understood: string[]; notes: string[]; more: boolean; question: string | null; options: string[];
@@ -63,6 +64,18 @@ export default function Discover() {
     const i = turns.length;
     setTurns((ts) => [...ts, { message: m, films: [], busy: true }]);
     fetchFilms(i, m);
+  };
+
+  // past the catalog: TMDB and a web search, only when the user asks (it takes ~10 s and uses a web search credit)
+  const searchBeyond = async (i: number, message: string) => {
+    update(i, { beyond: "busy", error: undefined });
+    try {
+      const a = await api<Answer>("/beyond", "POST", { message, session });
+      setTurns((ts) => ts.map((t, n) => (n === i ? { ...t, beyond: "done", films: [...t.films, ...a.films],
+        notes: [...(t.notes ?? []), ...a.notes] } : t)));
+    } catch (e) {
+      update(i, { beyond: undefined, error: (e as Error).message });
+    }
   };
 
   // an answer to a clarifying question becomes a fuller request: "I'm sad. A good cry"
@@ -126,18 +139,24 @@ export default function Discover() {
                   <FilmGrid films={t.films} onChange={(film) =>
                     update(i, { films: t.films.map((f) => (f.tmdb_id === film.tmdb_id ? film : f)) })} />
                 )}
-                {t.busy && (
+                {(t.busy || t.beyond === "busy") && (
                   <View style={s.busy}>
                     <ActivityIndicator size="small" color={colors.mist} />
-                    <T v="eyebrow">Reading your mood · checking every film</T>
+                    <T v="eyebrow">{t.beyond === "busy" ? "Searching TMDB and the web · checking every film"
+                      : "Reading your mood · checking every film"}</T>
                   </View>
                 )}
                 {t.error && <View style={s.note}><T v="caption" style={{ color: colors.white }}>{t.error}</T></View>}
-                {t.done && !t.question && !(t.films.length === 0 && t.notes?.length) && (
+                {t.done && !t.question && !t.beyond && !(t.films.length === 0 && t.notes?.length) && (
                   <T v="caption">
-                    {t.films.length ? "That's every film that fits this request."
-                      : "Nothing fits this request. Try describing it differently."}
+                    {t.films.length ? "That's every film in the catalog that fits this request."
+                      : "Nothing in the catalog fits this request."}
                   </T>
+                )}
+                {t.done && !t.busy && !t.question && !t.beyond && (
+                  <View style={{ alignSelf: "flex-start" }}>
+                    <Button icon="globe-outline" label="Search beyond the catalog" onPress={() => searchBeyond(i, t.message)} />
+                  </View>
                 )}
                 {!t.busy && !t.done && !t.question && i === turns.length - 1 && (
                   <View style={{ alignSelf: "flex-start" }}>

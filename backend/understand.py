@@ -22,7 +22,9 @@ from builder.embed import document
 from builder.vocab import ALL_TAGS, EFFECTS, PACES, TAGS
 
 GEMINI_MODEL = "gemini-3.5-flash-lite"
-GROQ_MODEL = "openai/gpt-oss-20b"
+# Groq backups in order. Each model has its own free limit of 8,000 tokens a minute (about two of these requests),
+# so a second model doubles the cover while Gemini is overloaded.
+GROQ_MODELS = ["openai/gpt-oss-20b", "openai/gpt-oss-120b"]
 GENRES = ["Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama", "Family", "Fantasy",
           "History", "Horror", "Music", "Mystery", "Romance", "Science Fiction", "TV Movie", "Thriller", "War", "Western"]
 
@@ -116,10 +118,10 @@ def ask_gemini(message, system=SYSTEM, schema=SCHEMA):
     return json.loads(r.text)
 
 
-def ask_groq(message, system=SYSTEM, schema=SCHEMA):
+def ask_groq(message, system=SYSTEM, schema=SCHEMA, model=GROQ_MODELS[0]):
     r = httpx.post("https://api.groq.com/openai/v1/chat/completions", timeout=20,
                    headers={"Authorization": f"Bearer {os.environ['GROQ_API_KEY']}"},
-                   json={"model": GROQ_MODEL, "temperature": 0, "reasoning_effort": "low",
+                   json={"model": model, "temperature": 0, "reasoning_effort": "low",
                          "response_format": {"type": "json_schema", "json_schema": {"name": "answer", "schema": schema}},
                          "messages": [{"role": "system", "content": system}, {"role": "user", "content": dated(message)}]})
     r.raise_for_status()
@@ -127,10 +129,12 @@ def ask_groq(message, system=SYSTEM, schema=SCHEMA):
 
 
 def ask(message, system, schema, check):
-    """Gemini, then Groq: the first answer that `check` accepts (check returns the cleaned answer or None)."""
-    for name, call in (("gemini", ask_gemini), ("groq", ask_groq)):
+    """Gemini, then each Groq model: the first answer that `check` accepts (check returns the cleaned answer or None)."""
+    calls = [("gemini", lambda: ask_gemini(message, system, schema))] + [
+        (m, lambda m=m: ask_groq(message, system, schema, model=m)) for m in GROQ_MODELS]
+    for name, call in calls:
         try:
-            answer = check(call(message, system, schema))
+            answer = check(call())
         except Exception as e:  # rate limit, timeout, bad JSON: try the next one
             print(f"llm: {name} failed: {type(e).__name__}: {str(e)[:120]}", flush=True)
             continue

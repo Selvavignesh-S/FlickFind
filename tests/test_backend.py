@@ -1,4 +1,5 @@
 import json
+import os
 import numpy as np
 import pyarrow as pa
 import pytest
@@ -56,7 +57,7 @@ def no_llm_calls(monkeypatch):
     """Tests never reach Gemini or Groq (network, quota); a test that needs an answer stubs it."""
     from backend import understand
 
-    def blocked(message, *args):
+    def blocked(message, *args, **kwargs):
         raise AssertionError("a test tried to call a real LLM")
     monkeypatch.setattr(understand, "ask_gemini", blocked)
     monkeypatch.setattr(understand, "ask_groq", blocked)
@@ -247,21 +248,23 @@ def test_query_rewrite_fallbacks_and_cache(monkeypatch):
     calls = []
     catalog = fake_catalog()
 
-    def down(message, *args):
+    def down(message, *args, **kwargs):
         calls.append("gemini")
         raise RuntimeError("429 quota")
     monkeypatch.setattr(understand, "ask_gemini", down)
-    monkeypatch.setattr(understand, "ask_groq", lambda m, *a: calls.append("groq") or dict(plan))
+    monkeypatch.setattr(understand, "ask_groq", lambda m, *a, **kw: calls.append("groq") or dict(plan))
 
     p = understand.prepare(catalog, "I want a good cry")  # Gemini down: Groq answered
     assert p["effects"] == ["catharsis"] and p["allowed"].all() and p["notes"] == []
     assert texts[-1].startswith("Drama. Mood: tender, bittersweet. Effect: catharsis. Pace: medium. Watch this when you")
     assert "good cry" not in texts[-1]  # the search text is the imagined film, not the message
     understand.prepare(catalog, "I want a good cry")
-    assert calls == ["gemini", "groq"]  # the second time came from the cache
+    assert calls == ["gemini", "groq"]  # the second time came from the cache (Groq's first model answered)
 
     monkeypatch.setattr(understand, "ask_groq", down)
-    p = understand.prepare(catalog, "make me laugh")  # both down: raw message + keyword rules, and the app is told
+    calls.clear()
+    p = understand.prepare(catalog, "make me laugh")  # all down: raw message + keyword rules, and the app is told
+    assert calls == ["gemini", "gemini", "gemini"]  # Gemini, then both Groq models were tried (the stub logs "gemini")
     assert (p["effects"], p["allowed"], texts[-1]) == (["lift"], None, "make me laugh") and p["notes"]
     monkeypatch.setattr(understand, "ask_gemini", lambda m, *a: dict(plan))
     assert understand.prepare(catalog, "make me laugh")["effects"] == ["catharsis"]  # a failure was not cached
@@ -417,3 +420,88 @@ def test_api_reloads_a_newly_packed_catalog(tmp_path, monkeypatch):
     (tmp_path / "manifest.json").write_text(json.dumps({**manifest, "version": "v2"}))
     os.utime(tmp_path / "manifest.json", (1, 2_000_000_000))  # a new pack
     assert main.get_catalog().version == "v2"
+
+
+def beyond_card(tmdb_id, **kw):
+    return {"tmdb_id": tmdb_id, "imdb_id": f"tt{tmdb_id}", "title": f"Web {tmdb_id}", "original_title": None,
+            "year": 2024, "runtime": 110, "language": "ml", "genres": ["Comedy"], "overview": "A film.", "tagline": None,
+            "poster_path": None, "poster": None, "imdb_rating": None, "imdb_votes": None, "director": ["Dileesh Pothan"],
+            "cast": ["Fahadh Faasil"], "providers_in": [], "countries": ["IN"], "companies": ["Bhavana Studios"],
+            "documentary": False, "animation": False, "mood_tags": [], "effect": "", "pace": "", "intensity": None,
+            "watch_when": "", "obscurity": 0.5, "beyond": True, **kw}
+
+
+def test_beyond_rules_on_tmdb_cards():
+    from backend.beyond import obeys
+    c = beyond_card(1)
+    assert obeys(c, {"directors": ["pothan"], "languages": ["ml"], "countries": ["IN"], "year_from": 2020})
+    assert not obeys(c, {"languages": ["ta"]}) and not obeys(c, {"genres": ["Comedy", "Drama"]})
+    assert not obeys(c, {"max_runtime": 90}) and not obeys(c, {"documentary": True})
+    assert obeys(c, {"studios": ["Bhavana"]}) and not obeys(c, {"actors": ["Mohanlal"]})
+
+
+def test_beyond_discover_parameters(monkeypatch):
+    from backend import beyond
+    calls = []
+
+    def fake(path, **params):
+        calls.append((path, params))
+        if path == "/search/person":
+            return {"results": [{"id": 77}] if params["query"] == "Known Person" else []}
+        return {"results": [{"id": 5}, {"id": 6}]}
+    monkeypatch.setattr(beyond, "tmdb", fake)
+    assert beyond.discover({}) == []  # no rules: nothing to discover
+    ids = beyond.discover({"languages": ["ml"], "genres": ["Comedy"], "year_from": 2010, "year_to": 2019,
+                           "directors": ["Known Person"], "documentary": False})
+    params = calls[-1][1]
+    assert ids == [5, 6] and params["with_original_language"] == "ml" and params["with_crew"] == "77"
+    assert params["with_genres"] == "35" and params["without_genres"] == "99"
+    assert params["primary_release_date.gte"] == "2010-01-01" and params["primary_release_date.lte"] == "2019-12-31"
+    assert beyond.discover({"directors": ["Nobody Known"]}) == []  # a person TMDB doesn't know: nothing obeys
+
+
+def test_beyond_search_merges_sources(monkeypatch):
+    from backend import beyond
+    c = fake_catalog()
+    monkeypatch.setattr(beyond, "found", {})
+    monkeypatch.setattr(beyond, "web_titles", lambda m: [("Alpha", None), ("Brand New", 2024)])
+    monkeypatch.setattr(beyond, "find_title", lambda t, y=None: {"Alpha": 1, "Brand New": 900}.get(t))
+    monkeypatch.setattr(beyond, "discover", lambda rules: [3, 901])
+    monkeypatch.setattr(beyond, "recommendations", lambda like: ([5, 902], [4]))  # film 4 is the reference itself
+    monkeypatch.setattr(beyond, "card", lambda i: beyond_card(i, language="ta" if i == 902 else "ml"))
+    cards = beyond.search(c, "x", {}, [{"title": "Delta"}], exclude=[5])
+    # web results first (1, 900), then recommendations (902; 5 already seen, 4 is the reference), then discover
+    assert [x["tmdb_id"] for x in cards] == [1, 900, 902, 3, 901] and set(beyond.found) == {900, 901, 902}
+    assert [x.get("beyond", False) for x in cards] == [False, True, True, False, True]
+    cards = beyond.search(c, "x", {"languages": ["ml"]}, [], exclude=[])
+    assert 902 not in [x["tmdb_id"] for x in cards]  # a Tamil film breaks a Malayalam rule
+    assert len(beyond.search(c, "x", {}, [], exclude=[], limit=2)) == 2
+
+
+def test_beyond_route_queues_new_finds(api, monkeypatch):
+    from backend import beyond
+    plan = {"rules": {}, "like": []}
+    monkeypatch.setattr(main, "understand", lambda message, about="": plan)
+    monkeypatch.setattr(beyond, "found", {900: beyond_card(900)})
+    monkeypatch.setattr(beyond, "search", lambda catalog, message, rules, like, exclude, limit=10:
+                        catalog.cards([2]) + [beyond_card(900)])
+    r = api.post("/beyond", json={"message": "malayalam comedies from 2024", "session": "s"}).json()
+    assert [f["tmdb_id"] for f in r["films"]] == [2, 900] and "new to FlickFind" in r["notes"][0]
+    assert api.put("/library/900", json={"status": "watchlist"}).status_code == 200  # a found film can be saved
+    import sqlite3
+    rows = sqlite3.connect(os.environ["FLICKFIND_DB"]).execute("SELECT tmdb_id, imdb_id, request FROM web_finds").fetchall()
+    assert rows == [(900, "tt900", "malayalam comedies from 2024")]
+
+
+def test_curation_reads_web_finds(tmp_path, monkeypatch):
+    import sqlite3
+
+    from builder import curate
+    db_path = tmp_path / "app.db"
+    monkeypatch.setenv("FLICKFIND_DB", str(db_path))
+    assert curate.web_finds() == set()  # no app database yet
+    con = sqlite3.connect(db_path)
+    con.execute("CREATE TABLE web_finds (tmdb_id INTEGER PRIMARY KEY, imdb_id TEXT, title TEXT, year INTEGER, request TEXT)")
+    con.execute("INSERT INTO web_finds VALUES (1, 'tt1', 'A', 2024, 'x'), (2, NULL, 'B', 2024, 'x')")
+    con.commit()
+    assert curate.web_finds() == {"tt1"}

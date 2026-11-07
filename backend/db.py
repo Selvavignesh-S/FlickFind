@@ -43,6 +43,14 @@ CREATE TABLE IF NOT EXISTS shown (
     shown_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id, session, tmdb_id)
 );
+CREATE TABLE IF NOT EXISTS web_finds (          -- films found beyond the catalog; builder.curate adds them
+    tmdb_id INTEGER PRIMARY KEY,
+    imdb_id TEXT,
+    title TEXT NOT NULL,
+    year INTEGER,
+    request TEXT NOT NULL,                      -- the request that found it
+    found_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS omdb (               -- Rotten Tomatoes cache (backend/omdb.py)
     imdb_id TEXT PRIMARY KEY,
     rotten_tomatoes INTEGER,                    -- NULL: OMDb has no RT score for the film

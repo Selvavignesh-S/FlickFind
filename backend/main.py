@@ -16,10 +16,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator
 
-from backend import db, fitcheck, omdb
+from backend import beyond, db, fitcheck, omdb
 from backend.catalog import NEUTRAL, POSTER, Catalog
 from builder.common import BUILD
-from backend.understand import prepare
+from backend.understand import prepare, understand
 
 NICHE_QUESTIONS_AT = 0.6  # niche users get the extra "watched" questions
 app = FastAPI(title="FlickFind")
@@ -206,9 +206,12 @@ class LibraryUpdate(BaseModel):
 @app.put("/library/{tmdb_id}")
 def save_to_library(tmdb_id: int, body: LibraryUpdate, user=Depends(current_user), con=Depends(get_db),
                     catalog=Depends(get_catalog)):
-    if tmdb_id not in catalog:
+    if tmdb_id in catalog:
+        film = catalog.cards([tmdb_id])[0]
+    elif tmdb_id in beyond.found:  # found beyond the catalog; joins it with the next daily update
+        film = beyond.found[tmdb_id]
+    else:
         raise HTTPException(404, "Film not found")
-    film = catalog.cards([tmdb_id])[0]
     status, reason, detail = body.status, body.block_reason, body.block_detail
     if status == "blocked":
         if reason is None:
@@ -320,3 +323,31 @@ def recommend(body: Ask, user=Depends(current_user), con=Depends(get_db), catalo
     return {"films": with_state(picks, user["id"], con, fetch_rt=False), "understood": plan["understood"], "notes": notes,
             "more": bool(hits), "question": None, "options": []}
 
+
+
+@app.post("/beyond")
+def search_beyond(body: Ask, user=Depends(current_user), con=Depends(get_db), catalog=Depends(get_catalog)):
+    """The fallback past the catalog, behind a button: TMDB and a web search, the request's rules applied, then the
+    same fit check. Films not in the catalog yet are queued in web_finds for the next daily update."""
+    excluded = [r[0] for r in con.execute("SELECT tmdb_id FROM library WHERE user_id = ?", (user["id"],))]
+    excluded += [r[0] for r in con.execute("SELECT tmdb_id FROM shown WHERE user_id = ? AND session = ?",
+                                           (user["id"], body.session))]
+    about = "; ".join(filter(None, [user["about"], json.loads(user["genres_like"]) and
+                                    "favourite genres: " + ", ".join(json.loads(user["genres_like"]))]))
+    plan = understand(body.message, about)
+    if plan is None:
+        return {"films": [], "understood": [], "more": False, "question": None, "options": [],
+                "notes": ["The AI couldn't be reached, so the search beyond the catalog didn't run. Try again soon."]}
+    candidates = beyond.search(catalog, body.message, plan["rules"], plan["like"], excluded, fitcheck.CANDIDATES)
+    new = [c for c in candidates if c.get("beyond")]
+    picks, checked = fitcheck.check(body.message, candidates, about)
+    seen = [c["tmdb_id"] for c in (candidates if checked else picks)]
+    con.executemany("INSERT OR IGNORE INTO shown (user_id, session, tmdb_id) VALUES (?, ?, ?)",
+                    [(user["id"], body.session, i) for i in seen])
+    con.executemany("INSERT OR IGNORE INTO web_finds (tmdb_id, imdb_id, title, year, request) VALUES (?, ?, ?, ?, ?)",
+                    [(c["tmdb_id"], c["imdb_id"], c["title"], c["year"], body.message) for c in new])
+    fresh = sum(1 for c in picks if c.get("beyond"))
+    notes = ([f"{fresh} of these {'is' if fresh == 1 else 'are'} new to FlickFind and will join the catalog with the "
+              "next daily update."] if fresh else []) + ([] if picks else ["Nothing beyond the catalog fits either."])
+    return {"films": with_state(picks, user["id"], con), "understood": ["beyond the catalog"], "notes": notes,
+            "more": False, "question": None, "options": []}

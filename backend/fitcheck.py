@@ -22,7 +22,9 @@ You get their request and candidate films from the app's catalog. For every cand
 - why: ONLY for films with fit 7 or more (leave it empty otherwise, to save time): one sentence, under 16 words,
   spoken to them, on why this film suits this request. No spoilers, and don't start with the title.
 Every candidate already meets any hard requirement in the request (director, actor, country, language, years,
-studio, genre), so judge only how well it fits what they want beyond that. Use only the details given."""
+studio, genre), so judge only how well it fits what they want beyond that. Use only the details given, except:
+a candidate marked "named by a web search for this request" was found by searching the web for exactly this request,
+so trust it on facts its details can't show (awards, festivals, critics' lists, "best of") and judge the rest."""
 
 SCHEMA = {"type": "object", "properties": {"films": {"type": "array", "items": {"type": "object", "properties": {
     "id": {"type": "integer"}, "fit": {"type": "integer"}, "why": {"type": "string"}},
@@ -31,8 +33,11 @@ SCHEMA = {"type": "object", "properties": {"films": {"type": "array", "items": {
 
 def describe(card):
     return {"id": card["tmdb_id"], "title": card["title"], "year": card["year"], "genres": card["genres"],
+            "language": card.get("language"), "director": (card.get("director") or [])[:2],
+            "cast": (card.get("cast") or [])[:3],
             "synopsis": (card.get("overview") or "")[:SYNOPSIS], "effect": card["effect"], "mood": card["mood_tags"],
-            "watch this when": card["watch_when"]}
+            "watch this when": card["watch_when"],
+            **({"named by a web search for this request": True} if card.get("via_web") else {})}
 
 
 def check(message, cards, about=""):
