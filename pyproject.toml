@@ -1,0 +1,31 @@
+[project]
+name = "flickfind"
+version = "0.2.0"
+description = "Mood-based conversational movie recommender"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "numpy>=2.1",
+    "pyarrow>=18",
+    "fastembed>=0.5",
+    "google-genai>=1.0",
+    "httpx>=0.28",
+    "bcrypt>=4.2",
+    "pyjwt>=2.10",
+    "boto3>=1.35",
+    "python-dotenv>=1.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+# Offline dataset builder only; the backend never needs these. A default group, so a plain `uv sync` keeps them.
+builder = ["duckdb>=1.1", "kaggle>=1.8"]
+
+[tool.uv]
+package = false
+default-groups = ["dev", "builder"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

@@ -1,35 +1,24 @@
-# Python virtual environments
-venv/
+# Python
 .venv/
 __pycache__/
 *.pyc
-*.pyo
+.pytest_cache/
 
-# Node/React dependencies and builds
+# Node / Expo
 node_modules/
-.pnpm-store/
 dist/
-frontend/dist/
-dist-ssr/
+.expo/
 
-# Environment secrets & local data
+# Secrets
 .env
 *.env
+
+# Local data: raw downloads, caches, catalog builds, SQLite
+data/
 *.db
-*.local
+*.parquet
 
-# AI Model weights & heavy assets
-models/
-*.bin
-*.pt
-*.onnx
-
-# IDE specific files
+# Editors / OS
 .vscode/
 .idea/
 .DS_Store
-
-# Big Data Assets & Parquet catalogs
-backend/movies_raw.parquet
-*.parquet
-backend/check_vector.py

@@ -1,440 +1,353 @@
+"""FlickFind API.
+
+Run: uv run uvicorn backend.main:app --reload --port 8000
+Accounts, preferences, the film library (watchlist / watched / blocked) and a first, LLM-free recommend route.
+"""
+import datetime
+import json
 import os
-import random
-import traceback
-from contextlib import asynccontextmanager
-from typing import Optional, List
+import threading
+from typing import Literal
 
-from dotenv import load_dotenv
-from fastapi import FastAPI, Depends, HTTPException
+import bcrypt
+import jwt
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import func, text
-from sqlalchemy.orm import Session
-from google import genai
-from google.genai import types
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel, Field, field_validator
 
-load_dotenv()
+from backend import beyond, db, fitcheck, omdb
+from backend.catalog import NEUTRAL, POSTER, Catalog
+from builder.common import BUILD
+from backend.understand import prepare, understand
 
-from schemas import (
-    MoodRequest,
-    ChattedRecommendationResponse,
-    MovieCard,
-    WatchlistAction,
-    WatchedAction,
-    DislikeAction,
-    UserCreate,
-    UserLogin,
-    UserResponse,
-    CompiledContextPayload,
-)
-from auth_utils import hash_user_password, verify_user_password
-from ai_service import ai_engine
-import database
-import models
-
-genai_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-
-# Cascade across available Gemini models if temporary 503 or 429 occurs
-GEMINI_MODELS = [
-    "gemini-3.5-flash-lite",
-    "gemini-3.5-flash",
-    "gemini-flash-latest",
-    "gemini-3.8-flash",
-]
+NICHE_QUESTIONS_AT = 0.6  # niche users get the extra "watched" questions
+app = FastAPI(title="FlickFind")
+# shortcut: any origin, fine while the API is only reachable on your laptop / tailnet; list the app's origins if hosted
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
-def generate_gemini_content(contents, config=None):
-    last_error = None
-    for model_name in GEMINI_MODELS:
-        try:
-            return genai_client.models.generate_content(
-                model=model_name,
-                contents=contents,
-                config=config,
-            )
-        except Exception as err:
-            last_error = err
-            error_str = str(err)
-            if any(code in error_str for code in ["503", "404", "429", "UNAVAILABLE"]):
-                continue
-            raise err
-    raise last_error
+CATALOG_DIR = BUILD / "catalog"
+_loaded = {}  # the catalog in memory and the manifest timestamp it came from
 
 
-ALGORITHM_CONFIG = {
-    "MIN_RATING": 6.0,
-    "MIN_VOTES": 300,
-    "MIN_RUNTIME": 60,
-    "CANDIDATE_POOL_LIMIT": 35,
-    "POPULARITY_MULTIPLIER": 0.05,
-    "RATING_MULTIPLIER": 0.02,
-    "LONG_TERM_PERSONA_WEIGHT": 0.3,
-}
-
-CONTEXT_COMPILER_PROMPT = (
-    "You are an expert cinematic context extractor and routing gatekeeper. "
-    "Review the following conversational stream history between a user and an AI film assistant.\n\n"
-    "TASK 1: Extract all explicit and implicit movie preferences, emotional layers, pacing requests, "
-    "atmospheres, visual descriptions and sonic elements mentioned across ALL turns of the dialogue "
-    "into a single dense continuous search query paragraph for dense_search_query. "
-    "Focus strictly on thematic elements, tone, and cinematic styles. "
-    "Do not include introductory text.\n\n"
-    "TASK 2: Evaluate should_bypass_profile. Set to true if the user explicitly or implicitly "
-    "requests a change of pace, wants to ignore their profile, desires something completely "
-    "new or different, or describes a direction that intentionally breaks from their usual preferences. "
-    "Otherwise default to false.\n\n"
-    "[CONVERSATION STREAM MEMORY]\n"
-    "{formatted_history}"
-)
-
-CONCIERGE_SYSTEM_INSTRUCTION = (
-    "You are FlickFind AI, a film recommendation engine that adapts to the user's unique cinema taste "
-    "without any genre bias. You receive the full conversation history, a long-term user taste profile, "
-    "and a candidate pool of mathematically matching movies from the local database.\n\n"
-    "YOUR OBJECTIVE IS TO EXECUTE A SINGLE PASS EVALUATION:\n\n"
-    "1. Context Sufficiency Check:\n"
-    "   If the conversation lacks enough context (e.g. 'give me a movie'), set is_context_sufficient = false. "
-    "   Ask targeted questions in ai_followup_chat. Leave recommendations empty.\n"
-    "   If the context is concrete enough to pick films, set is_context_sufficient = true.\n\n"
-    "2. Dynamic Profile Override and Selection (only if is_context_sufficient is true):\n"
-    "   If the user wants something outside their usual taste, bypass profile constraints and select 5 films "
-    "   matching their new intent from the candidates.\n"
-    "   Otherwise favor Favorite Genres and filter out Disliked Genres. Only deviate if explicitly requested.\n\n"
-    "3. Response Formulation:\n"
-    "   In ai_followup_chat, write a punchy engaging intro for your picks in under 3 lines.\n"
-    "   Map all 5 chosen movies to the schema EXACTLY from the candidate context. Do not hallucinate missing data.\n"
-    "   For each movie write a compelling 2-to-3 sentence hybrid_summary explaining why it fits the mood. No spoilers."
-)
+def get_catalog():
+    """The catalog in memory; reloaded (a few seconds, once) when a new one is packed, e.g. by scripts/daily.sh."""
+    stamp = (CATALOG_DIR / "manifest.json").stat().st_mtime
+    if _loaded.get("stamp") != stamp:
+        _loaded.update(catalog=Catalog.load(CATALOG_DIR), stamp=stamp)
+    return _loaded["catalog"]
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    ai_engine.load_model()
-    yield
-
-
-app = FastAPI(title="FlickFind API", version="1.0.0", lifespan=lifespan)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-# --- Health ---
-
-@app.get("/")
-async def root():
-    return {"status": "online", "message": "FlickFind API Active"}
-
-
-@app.get("/api/v1/health/db")
-async def check_database_health(db: Session = Depends(database.get_db)):
+def get_db():
+    con = db.connect()
     try:
-        db.execute(text("SELECT 1"))
-        count = db.query(models.Movie).count()
-        return {"database_status": "connected", "movies_indexed": count}
-    except Exception as e:
-        return {"database_status": "disconnected", "error": str(e)}
+        yield con
+        con.commit()
+    finally:
+        con.close()
 
 
-# --- Auth ---
+# ---- accounts ----
 
-@app.post("/api/v1/auth/register", response_model=UserResponse)
-async def register_user(user_data: UserCreate, db: Session = Depends(database.get_db)):
-    if db.query(models.User).filter(models.User.username == user_data.username).first():
-        raise HTTPException(status_code=400, detail="Username is already taken.")
-
-    if db.query(models.User).filter(models.User.email == user_data.email).first():
-        raise HTTPException(status_code=400, detail="Email is already registered.")
-
-    new_user = models.User(
-        username=user_data.username,
-        email=user_data.email,
-        hashed_password=hash_user_password(user_data.password),
-        watcher_tier="BASIC_WATCHER",
-        persona_vector_data=[0.0] * 768,
-    )
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-    return new_user
+def make_token(user_id):
+    exp = datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=30)
+    return jwt.encode({"sub": str(user_id), "exp": exp}, os.environ["JWT_SECRET"], algorithm="HS256")
 
 
-@app.post("/api/v1/auth/login")
-async def login_user(credentials: UserLogin, db: Session = Depends(database.get_db)):
-    user = db.query(models.User).filter(models.User.username == credentials.username).first()
-    if not user or not verify_user_password(credentials.password, user.hashed_password):
-        raise HTTPException(status_code=400, detail="Invalid username or password.")
-
-    return {
-        "message": "Authentication successful",
-        "user_id": user.id,
-        "username": user.username,
-        "watcher_tier": user.watcher_tier,
-    }
-
-
-# --- User Engagement ---
-
-@app.post("/api/v1/user/watchlist", status_code=200)
-async def toggle_watchlist_item(action: WatchlistAction, db: Session = Depends(database.get_db)):
-    existing = db.query(models.UserWatchlist).filter(
-        models.UserWatchlist.user_id == action.user_id,
-        models.UserWatchlist.movie_id == action.movie_id,
-    ).first()
-
-    if existing:
-        db.delete(existing)
-        db.commit()
-        return {"status": "removed", "message": "Movie removed from watchlist."}
-
-    db.add(models.UserWatchlist(user_id=action.user_id, movie_id=action.movie_id))
-    db.commit()
-    return {"status": "added", "message": "Movie added to watchlist."}
-
-
-@app.get("/api/v1/user/watchlist/{user_id}", response_model=List[MovieCard])
-async def get_user_watchlist(user_id: int, db: Session = Depends(database.get_db)):
+def current_user(creds: HTTPAuthorizationCredentials | None = Depends(HTTPBearer(auto_error=False)),
+                 con=Depends(get_db)):
     try:
-        movies = (
-            db.query(models.Movie)
-            .join(models.UserWatchlist, models.UserWatchlist.movie_id == models.Movie.id)
-            .filter(models.UserWatchlist.user_id == user_id)
-            .order_by(models.UserWatchlist.added_at.desc())
-            .all()
-        )
-        return [
-            MovieCard(
-                id=m.id,
-                title=m.title,
-                release_year=m.release_year,
-                imdb_rating=m.imdb_rating,
-                runtime=m.runtime or 0,
-                director=m.director or "Unknown Director",
-                director_of_photography=m.director_of_photography or "Unknown",
-                music_composer=m.music_composer or "Unknown",
-                poster_path=m.poster_path,
-                hybrid_summary=m.overview or "",
-            )
-            for m in movies
-        ]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch watchlist: {str(e)}")
+        user_id = int(jwt.decode(creds.credentials, os.environ["JWT_SECRET"], algorithms=["HS256"])["sub"])
+    except (AttributeError, jwt.PyJWTError):
+        raise HTTPException(401, "Please log in again")
+    user = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    if user is None:
+        raise HTTPException(401, "Please log in again")
+    return user
 
 
-@app.post("/api/v1/user/watched", status_code=200)
-async def log_watched_movie(action: WatchedAction, db: Session = Depends(database.get_db)):
-    db.add(models.UserWatchedHistory(
-        user_id=action.user_id,
-        movie_id=action.movie_id,
-        rating=action.rating,
-        critic_review=action.critic_review,
-    ))
+class Signup(BaseModel):
+    email: str = Field(max_length=254)
+    password: str = Field(min_length=8, max_length=72)  # bcrypt only reads the first 72 bytes
+    name: str = Field(min_length=1, max_length=60)
 
-    user = db.query(models.User).filter(models.User.id == action.user_id).first()
-    movie = db.query(models.Movie).filter(models.Movie.id == action.movie_id).first()
-
-    if user and movie and movie.mood_vector_data is not None:
-        # EMA: shift persona vector 15% toward the watched movie
-        LEARNING_RATE = 0.15
-        if user.persona_vector_data is None:
-            user.persona_vector_data = [0.0] * 768
-
-        user.persona_vector_data = [
-            (1 - LEARNING_RATE) * u + LEARNING_RATE * m
-            for u, m in zip(list(user.persona_vector_data), list(movie.mood_vector_data))
-        ]
-
-        total_watched = db.query(models.UserWatchedHistory).filter(
-            models.UserWatchedHistory.user_id == action.user_id
-        ).count()
-
-        if total_watched >= 15:
-            user.watcher_tier = "CRITIC"
-        elif total_watched >= 5:
-            user.watcher_tier = "DEEP_DIVER"
-        else:
-            user.watcher_tier = "BASIC_WATCHER"
-
-    db.commit()
-    return {
-        "status": "success",
-        "message": "Watch history recorded.",
-        "updated_tier": user.watcher_tier if user else "BASIC_WATCHER",
-    }
+    @field_validator("email")
+    @classmethod
+    def looks_like_email(cls, v):
+        v = v.strip().lower()
+        if "@" not in v.strip("@"):
+            raise ValueError("not an email address")
+        return v
 
 
-@app.post("/api/v1/user/dislike", status_code=200)
-async def log_disliked_movie(action: DislikeAction, db: Session = Depends(database.get_db)):
+class Login(BaseModel):
+    email: str
+    password: str
+
+
+@app.post("/auth/register")
+def register(body: Signup, con=Depends(get_db)):
+    if con.execute("SELECT 1 FROM users WHERE email = ?", (body.email,)).fetchone():
+        raise HTTPException(409, "An account with this email already exists")
+    pw = bcrypt.hashpw(body.password.encode(), bcrypt.gensalt())
+    cur = con.execute("INSERT INTO users (email, password_hash, name, niche) VALUES (?, ?, ?, ?)",
+                      (body.email, pw, body.name, NEUTRAL))  # every new user starts with no lean either way
+    return {"token": make_token(cur.lastrowid)}
+
+
+@app.post("/auth/login")
+def login(body: Login, con=Depends(get_db)):
+    user = con.execute("SELECT id, password_hash FROM users WHERE email = ?", (body.email.strip().lower(),)).fetchone()
+    if user is None or not bcrypt.checkpw(body.password.encode(), user["password_hash"]):
+        raise HTTPException(401, "Wrong email or password")
+    return {"token": make_token(user["id"])}
+
+
+# ---- profile and preferences ----
+
+def profile(user):
+    return {"id": user["id"], "email": user["email"], "name": user["name"], "about": user["about"],
+            "genres_like": json.loads(user["genres_like"]), "genres_avoid": json.loads(user["genres_avoid"]),
+            "niche": round(user["niche"], 3), "taste": taste_label(user["niche"]),
+            "niche_questions": user["niche"] >= NICHE_QUESTIONS_AT}
+
+
+def taste_label(n):
+    return "Mainstream" if n < 0.4 else "Niche" if n > NICHE_QUESTIONS_AT else "Balanced"
+
+
+class Preferences(BaseModel):
+    about: str = Field(default="", max_length=2000)
+    genres_like: list[str] = Field(default=[], max_length=30)
+    genres_avoid: list[str] = Field(default=[], max_length=30)
+
+
+@app.get("/me")
+def me(user=Depends(current_user)):
+    return profile(user)
+
+
+@app.put("/me/preferences")
+def set_preferences(body: Preferences, user=Depends(current_user), con=Depends(get_db), catalog=Depends(get_catalog)):
+    known = set(catalog.all_genres())
+    if unknown := (set(body.genres_like) | set(body.genres_avoid)) - known:
+        raise HTTPException(422, f"Unknown genres: {', '.join(sorted(unknown))}")
+    if both := set(body.genres_like) & set(body.genres_avoid):
+        raise HTTPException(422, f"A genre can't be both liked and avoided: {', '.join(sorted(both))}")
+    con.execute("UPDATE users SET about = ?, genres_like = ?, genres_avoid = ? WHERE id = ?",
+                (body.about.strip(), json.dumps(body.genres_like), json.dumps(body.genres_avoid), user["id"]))
+    return profile(con.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone())
+
+
+@app.get("/genres")
+def genres(catalog=Depends(get_catalog)):
+    return catalog.all_genres()
+
+
+# ---- films and the library ----
+
+def with_state(cards, user_id, con, fetch_rt=True):
+    """Add the user's library state and the FlickFind rating (average of FlickFind users' stars) to cards."""
+    if not cards:
+        return cards
+    ids = [c["tmdb_id"] for c in cards]
+    marks = ",".join("?" * len(ids))
+    mine = {r["tmdb_id"]: dict(r) for r in con.execute(
+        f"SELECT tmdb_id, status, rating, block_reason FROM library WHERE user_id = ? AND tmdb_id IN ({marks})",
+        (user_id, *ids))}
+    stars = {r[0]: (r[1], r[2]) for r in con.execute(
+        f"SELECT tmdb_id, AVG(rating), COUNT(rating) FROM library WHERE rating IS NOT NULL AND tmdb_id IN ({marks}) "
+        "GROUP BY tmdb_id", ids)}
+    rt = omdb.scores([c.get("imdb_id") for c in cards], con, fetch=fetch_rt)
+    for c in cards:
+        avg, n = stars.get(c["tmdb_id"], (None, 0))
+        c["ratings"] = {"imdb": c.get("imdb_rating"), "rotten_tomatoes": rt.get(c.get("imdb_id")),
+                        "flickfind": round(avg, 1) if avg else None, "flickfind_votes": n}
+        c["library"] = mine.get(c["tmdb_id"])
+    return cards
+
+
+@app.get("/films/{tmdb_id}")
+def film(tmdb_id: int, user=Depends(current_user), con=Depends(get_db), catalog=Depends(get_catalog)):
+    if tmdb_id not in catalog:
+        raise HTTPException(404, "Film not found")
+    return with_state(catalog.cards([tmdb_id]), user["id"], con)[0]
+
+
+@app.get("/library")
+def library(status: Literal["watchlist", "watched", "blocked"], user=Depends(current_user), con=Depends(get_db),
+            catalog=Depends(get_catalog)):
+    rows = [dict(r) for r in con.execute(
+        "SELECT * FROM library WHERE user_id = ? AND status = ? ORDER BY updated_at DESC", (user["id"], status))]
+    cards = {c["tmdb_id"]: c for c in with_state(catalog.cards([r["tmdb_id"] for r in rows if r["tmdb_id"] in catalog]),
+                                                  user["id"], con)}
+    out = []
+    for r in rows:  # a film that left the catalog still shows, from the copy saved in its row
+        card = cards.get(r["tmdb_id"]) or {"tmdb_id": r["tmdb_id"], "title": r["title"], "year": r["year"],
+                                           "poster": r["poster_path"] and POSTER + r["poster_path"],
+                                           "library": r, "missing": True}
+        card["library"] = r
+        out.append(card)
+    return out
+
+
+class LibraryUpdate(BaseModel):
+    status: Literal["watchlist", "watched", "blocked"]
+    rating: int | None = Field(default=None, ge=1, le=5)
+    comment: str | None = Field(default=None, max_length=2000)
+    mood_match: int | None = Field(default=None, ge=1, le=5)
+    mindset: str | None = Field(default=None, max_length=500)
+    # "watched" as a block reason = "I've already seen it": saved as watched, not blocked
+    block_reason: Literal["language", "watched", "theme", "actor", "mainstream", "other"] | None = None
+    block_detail: str | None = Field(default=None, max_length=200)
+
+
+@app.put("/library/{tmdb_id}")
+def save_to_library(tmdb_id: int, body: LibraryUpdate, user=Depends(current_user), con=Depends(get_db),
+                    catalog=Depends(get_catalog)):
+    if tmdb_id in catalog:
+        film = catalog.cards([tmdb_id])[0]
+    elif tmdb_id in beyond.found:  # found beyond the catalog; joins it with the next daily update
+        film = beyond.found[tmdb_id]
+    else:
+        raise HTTPException(404, "Film not found")
+    status, reason, detail = body.status, body.block_reason, body.block_detail
+    if status == "blocked":
+        if reason is None:
+            raise HTTPException(422, "Tell us why you're rejecting this film")
+        if reason == "watched":
+            status, reason = "watched", None
+        elif reason == "language":
+            detail = film["language"]
+        elif reason == "actor" and detail not in film["cast"]:
+            raise HTTPException(422, "Pick one of this film's actors")
+    else:
+        reason = detail = None
+
+    niche = user["niche"]
+    if reason == "mainstream":
+        niche = min(1.0, niche + 0.1)
+    elif status == "watched" and (body.rating or 0) >= 4:  # loving a film pulls the lean toward it: famous or obscure
+        niche += 0.1 * (film["obscurity"] - niche)
+    # shortcut: no daily cap on niche drift yet; add one in P4 if a burst of ratings swings it too far
+    con.execute("UPDATE users SET niche = ? WHERE id = ?", (niche, user["id"]))
+    con.execute("""INSERT INTO library (user_id, tmdb_id, status, title, year, poster_path, rating, comment, mood_match,
+                       mindset, block_reason, block_detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT (user_id, tmdb_id) DO UPDATE SET status = excluded.status, rating = excluded.rating,
+                       comment = excluded.comment, mood_match = excluded.mood_match, mindset = excluded.mindset,
+                       block_reason = excluded.block_reason, block_detail = excluded.block_detail,
+                       updated_at = CURRENT_TIMESTAMP""",
+                (user["id"], tmdb_id, status, film["title"], film["year"], film["poster_path"],
+                 body.rating if status == "watched" else None, body.comment if status == "watched" else None,
+                 body.mood_match if status == "watched" else None, body.mindset if status == "watched" else None,
+                 reason, detail))
+    return with_state([film], user["id"], con)[0]
+
+
+@app.delete("/library/{tmdb_id}")
+def remove_from_library(tmdb_id: int, user=Depends(current_user), con=Depends(get_db)):
+    """Remove from the watchlist, unwatch, or unblock."""
+    con.execute("DELETE FROM library WHERE user_id = ? AND tmdb_id = ?", (user["id"], tmdb_id))
+    return {"ok": True}
+
+
+# ---- recommendations ----
+
+def prefetch_rt(imdb_ids):
+    con = db.connect()
     try:
-        db.add(models.UserDislikedFilter(
-            user_id=action.user_id,
-            movie_id=action.movie_id,
-            rejection_reason=action.rejection_reason,
-        ))
-        db.commit()
-
-        if action.user_id and action.rejection_reason:
-            user = db.query(models.User).filter(models.User.id == action.user_id).first()
-            if user:
-                negative_vector = ai_engine.generate_vector(action.rejection_reason)
-                if user.persona_vector_data is None:
-                    user.persona_vector_data = [0.0] * 768
-
-                # Penalty adjustment: shift persona vector away from the rejected vibe
-                PENALTY_RATE = 0.15
-                user.persona_vector_data = [
-                    c - (PENALTY_RATE * n)
-                    for c, n in zip(user.persona_vector_data, negative_vector)
-                ]
-                db.commit()
-
-        return {"status": "success", "message": "Dislike recorded and preference updated."}
-
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Dislike tracking failed: {str(e)}")
+        omdb.scores(imdb_ids, con)
+        con.commit()
+    finally:
+        con.close()
 
 
-# --- Recommendations ---
+class Ask(BaseModel):
+    message: str = Field(min_length=1, max_length=1000)
+    session: str = Field(min_length=1, max_length=64)  # one chat; "Find more" repeats the call with the same session
+    clarify: bool = True  # False after "Just show me something": skip any clarifying question
 
-@app.post("/api/v1/recommend/mood", response_model=ChattedRecommendationResponse)
-async def analyze_mood_chat(
-    request: MoodRequest,
-    user_id: Optional[int] = None,
-    db: Session = Depends(database.get_db),
-):
-    try:
-        formatted_history = "".join(
-            f"{msg.role.upper()}: {msg.text}\n" for msg in request.chat_history
-        )
-        formatted_history += f"USER CURRENT COMMAND: {request.mood_text}"
 
-        # Pass 1: Extract dense semantic search query and evaluate profile bypass
-        compile_response = generate_gemini_content(
-            contents=CONTEXT_COMPILER_PROMPT.format(formatted_history=formatted_history),
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=CompiledContextPayload,
-            ),
-        )
-        compiler_result = CompiledContextPayload.model_validate_json(compile_response.text)
-        dense_query = compiler_result.dense_search_query.strip()
-        bypass_profile = compiler_result.should_bypass_profile
+@app.post("/recommend")
+def recommend(body: Ask, user=Depends(current_user), con=Depends(get_db), catalog=Depends(get_catalog)):
+    """Up to 5 films for a message, never repeating within a session, or a clarifying question.
 
-        query_vector = ai_engine.generate_vector(dense_query)
+    LLM call 1 (backend.understand) reads the message: the imagined ideal film, hard rules, reference films, and a
+    question if it is too vague. The search proposes candidates, reordered by the user's taste (liked / disliked
+    films, favourite genres, films shown in earlier chats); LLM call 2 (backend.fitcheck) keeps the ones that truly
+    fit and writes why. "About me" and favourite genres are background for both LLM calls.
+    """
+    lib = con.execute("SELECT tmdb_id, status, rating, block_reason, block_detail FROM library WHERE user_id = ?",
+                      (user["id"],)).fetchall()
+    shown = [r[0] for r in con.execute("SELECT tmdb_id FROM shown WHERE user_id = ? AND session = ?",
+                                       (user["id"], body.session))]
+    seen_before = [r[0] for r in con.execute(
+        "SELECT DISTINCT tmdb_id FROM shown WHERE user_id = ? AND session != ? AND shown_at >= datetime('now', '-30 days')",
+        (user["id"], body.session))]
+    # taste from activity: loved films pull, disliked ones and "not this kind of story" rejections push.
+    # The watchlist says nothing about taste (spec), so it is left out.
+    liked = {r["tmdb_id"]: {5: 1.0, 4: 0.6}[r["rating"]] for r in lib if r["status"] == "watched" and (r["rating"] or 0) >= 4}
+    disliked = {r["tmdb_id"]: {1: 1.0, 2: 0.6}[r["rating"]] for r in lib
+                if r["status"] == "watched" and r["rating"] in (1, 2)}
+    disliked |= {r["tmdb_id"]: 1.0 for r in lib if r["block_reason"] == "theme"}
+    liked_genres = json.loads(user["genres_like"])
+    about = "; ".join(filter(None, [user["about"], liked_genres and "favourite genres: " + ", ".join(liked_genres)]))
+    plan = prepare(catalog, body.message, about)
+    if plan["clarify"] and body.clarify:
+        return {"films": [], "understood": plan["understood"], "notes": plan["notes"], "more": False,
+                "question": plan["clarify"]["question"], "options": plan["clarify"]["options"]}
+    hits = catalog.search(
+        plan["query_vec"], k=fitcheck.CANDIDATES, allowed=plan["allowed"],  # the request's hard rules ("Indian", "by Tarantino")
+        exclude=[r["tmdb_id"] for r in lib] + shown + plan["exclude"],  # library films never come back
+        avoid_languages={r["block_detail"] for r in lib if r["block_reason"] == "language"},
+        avoid_actors={r["block_detail"] for r in lib if r["block_reason"] == "actor"},
+        # a genre the user avoids in Preferred still comes through when this request asks for it by name
+        avoid_genres=set(json.loads(user["genres_avoid"])) - set(plan["asked_genres"]),
+        effects=plan["effects"], niche=user["niche"],
+        liked=catalog.taste(liked), disliked=catalog.taste(disliked), liked_genres=liked_genres, seen_before=seen_before,
+        liked_languages=catalog.language_shares(liked))
+    candidates = catalog.cards([i for i, _ in hits])
+    # Rotten Tomatoes scores are fetched while the fit check runs (own connection: sqlite is per thread), so the
+    # cards come back ~1 s sooner; with_state below then reads them from the cache
+    rt = threading.Thread(target=prefetch_rt, args=([c.get("imdb_id") for c in candidates],), daemon=True)
+    rt.start()
+    picks, checked = fitcheck.check(body.message, candidates, about)
+    rt.join(timeout=5)
+    # films the check turned down count as seen too, so "Find more" moves past them; without a check, only the shown
+    seen = [i for i, _ in hits] if checked else [c["tmdb_id"] for c in picks]
+    con.executemany("INSERT OR IGNORE INTO shown (user_id, session, tmdb_id) VALUES (?, ?, ?)",
+                    [(user["id"], body.session, i) for i in seen])
+    notes = plan["notes"] + ([] if picks or not hits else
+                             ["None of the closest matches fit well enough. Find more looks further."])
+    return {"films": with_state(picks, user["id"], con, fetch_rt=False), "understood": plan["understood"], "notes": notes,
+            "more": bool(hits), "question": None, "options": []}
 
-        pop_w = 0.0 if bypass_profile else ALGORITHM_CONFIG["POPULARITY_MULTIPLIER"]
-        rat_w = 0.0 if bypass_profile else ALGORITHM_CONFIG["RATING_MULTIPLIER"]
 
-        persona_vector = None
-        if user_id and not bypass_profile:
-            user = db.query(models.User).filter(models.User.id == user_id).first()
-            if user and user.persona_vector_data and any(v != 0.0 for v in user.persona_vector_data):
-                persona_vector = user.persona_vector_data
 
-        movie_query = db.query(models.Movie).filter(
-            models.Movie.runtime >= ALGORITHM_CONFIG["MIN_RUNTIME"],
-            models.Movie.imdb_rating >= ALGORITHM_CONFIG["MIN_RATING"],
-            models.Movie.imdb_votes >= ALGORITHM_CONFIG["MIN_VOTES"],
-        )
-
-        if user_id:
-            disliked_ids = [
-                r[0] for r in db.query(models.UserDislikedFilter.movie_id)
-                .filter(models.UserDislikedFilter.user_id == user_id)
-                .all()
-            ]
-            if disliked_ids:
-                movie_query = movie_query.filter(~models.Movie.id.in_(disliked_ids))
-
-        if request.displayed_movie_ids:
-            movie_query = movie_query.filter(~models.Movie.id.in_(request.displayed_movie_ids))
-
-        prompt_distance = models.Movie.mood_vector_data.cosine_distance(query_vector)
-        if persona_vector is not None:
-            pw = ALGORITHM_CONFIG["LONG_TERM_PERSONA_WEIGHT"]
-            sort_score = (
-                (1.0 - pw) * prompt_distance
-                + pw * models.Movie.mood_vector_data.cosine_distance(persona_vector)
-            )
-        else:
-            sort_score = prompt_distance
-
-        log_popularity = func.ln(models.Movie.popularity + 1)
-
-        candidates = (
-            movie_query
-            .order_by(sort_score - (log_popularity * pop_w) - (models.Movie.imdb_rating * rat_w))
-            .limit(ALGORITHM_CONFIG["CANDIDATE_POOL_LIMIT"])
-            .all()
-        )
-
-        if not candidates:
-            fallback = db.query(models.Movie)
-            if request.displayed_movie_ids:
-                fallback = fallback.filter(~models.Movie.id.in_(request.displayed_movie_ids))
-            candidates = fallback.order_by(prompt_distance).limit(30).all()
-
-        if not candidates:
-            return ChattedRecommendationResponse(
-                is_context_sufficient=True,
-                ai_followup_chat="The movie database catalog appears empty. Please run the database seeder first.",
-                recommendations=[],
-            )
-
-        top_5 = candidates[:5]
-        pool = candidates[5:]
-        sampled = top_5 + random.sample(pool, min(len(pool), 25))
-
-        profile_context = "No profile constraints active."
-        if request.user_profile:
-            p = request.user_profile
-            profile_context = (
-                f"Favorite Genres: {p.favorite_genres} | "
-                f"Disliked Genres: {p.disliked_genres} | "
-                f"Preferred Eras: {p.preferred_eras}"
-            )
-
-        movie_context = "\n".join(
-            f"ID: {m.id} | Title: {m.title} | Year: {m.release_year} | Rating: {m.imdb_rating} | "
-            f"Runtime: {m.runtime}m | Genres: {m.genres or 'N/A'} | Director: {m.director or 'Unknown'} | "
-            f"Cinematographer: {m.director_of_photography or 'Unknown'} | "
-            f"Composer: {m.music_composer or 'Unknown'} | PosterPath: {m.poster_path or ''}"
-            for m in sampled
-        )
-
-        generation_prompt = (
-            f"[CONVERSATION STREAM MEMORY]\n{formatted_history}\n\n"
-            f"[LONG-TERM USER PROFILE MATRIX]\n{profile_context}\n\n"
-            f"[CANDIDATE CINEMATIC SELECTIONS AVAILABLE]\n{movie_context}\n\n"
-            "Analyze the inputs above and output the final structured JSON package matching the response model."
-        )
-
-        # Pass 2: Concierge selection and structured summary generation
-        ai_response = generate_gemini_content(
-            contents=generation_prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=CONCIERGE_SYSTEM_INSTRUCTION,
-                response_mime_type="application/json",
-                response_schema=ChattedRecommendationResponse,
-            ),
-        )
-
-        result = ChattedRecommendationResponse.model_validate_json(ai_response.text)
-
-        if result.is_context_sufficient and result.recommendations:
-            selected_ids = {m.id for m in result.recommendations}
-            for movie in sampled:
-                if movie.id in selected_ids:
-                    movie.hit_count += 1
-            db.commit()
-
-        return result
-
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Recommendation engine error: {str(e)}")
+@app.post("/beyond")
+def search_beyond(body: Ask, user=Depends(current_user), con=Depends(get_db), catalog=Depends(get_catalog)):
+    """The fallback past the catalog, behind a button: TMDB and a web search, the request's rules applied, then the
+    same fit check. Films not in the catalog yet are queued in web_finds for the next daily update."""
+    excluded = [r[0] for r in con.execute("SELECT tmdb_id FROM library WHERE user_id = ?", (user["id"],))]
+    excluded += [r[0] for r in con.execute("SELECT tmdb_id FROM shown WHERE user_id = ? AND session = ?",
+                                           (user["id"], body.session))]
+    about = "; ".join(filter(None, [user["about"], json.loads(user["genres_like"]) and
+                                    "favourite genres: " + ", ".join(json.loads(user["genres_like"]))]))
+    plan = understand(body.message, about)
+    if plan is None:
+        return {"films": [], "understood": [], "more": False, "question": None, "options": [],
+                "notes": ["The AI couldn't be reached, so the search beyond the catalog didn't run. Try again soon."]}
+    candidates = beyond.search(catalog, body.message, plan["rules"], plan["like"], excluded, fitcheck.CANDIDATES)
+    new = [c for c in candidates if c.get("beyond")]
+    picks, checked = fitcheck.check(body.message, candidates, about)
+    seen = [c["tmdb_id"] for c in (candidates if checked else picks)]
+    con.executemany("INSERT OR IGNORE INTO shown (user_id, session, tmdb_id) VALUES (?, ?, ?)",
+                    [(user["id"], body.session, i) for i in seen])
+    con.executemany("INSERT OR IGNORE INTO web_finds (tmdb_id, imdb_id, title, year, request) VALUES (?, ?, ?, ?, ?)",
+                    [(c["tmdb_id"], c["imdb_id"], c["title"], c["year"], body.message) for c in new])
+    fresh = sum(1 for c in picks if c.get("beyond"))
+    notes = ([f"{fresh} of these {'is' if fresh == 1 else 'are'} new to FlickFind and will join the catalog with the "
+              "next daily update."] if fresh else []) + ([] if picks else ["Nothing beyond the catalog fits either."])
+    return {"films": with_state(picks, user["id"], con), "understood": ["beyond the catalog"], "notes": notes,
+            "more": False, "question": None, "options": []}

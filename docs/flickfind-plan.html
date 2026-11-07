@@ -1,0 +1,1128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FlickFind Build Plan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Plan: cool paper neutrals, one cobalt accent for "the thing to look at"; grotesque display + Plex body; layout = sticky contents rail + one reading column with full-width figures. */
+:root{
+  --bg:#f4f6f9; --surface:#ffffff; --zone:#eef1f6; --ink:#17202b; --muted:#566273;
+  --line:#dbe0e8; --line-strong:#9aa5b5; --accent:#2952c4; --accent-soft:#e6ecfb; --on-accent:#ffffff;
+  --good:#1d7a4c; --warn:#9a6200; --bad:#b4261c; --code-bg:#eef1f6;
+  --seg1:#d9e2f7; --seg2:#b3c5ef; --seg3:#8ca7e6;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0e131a; --surface:#151c26; --zone:#1a2230; --ink:#e4e9f0; --muted:#9aa6b5;
+    --line:#273140; --line-strong:#5a687c; --accent:#89a8ff; --accent-soft:#1c2947; --on-accent:#0e131a;
+    --good:#5fca91; --warn:#e2ac45; --bad:#ff8b80; --code-bg:#1a2230;
+    --seg1:#1f2d4d; --seg2:#2b4174; --seg3:#3b58a0;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0e131a; --surface:#151c26; --zone:#1a2230; --ink:#e4e9f0; --muted:#9aa6b5;
+  --line:#273140; --line-strong:#5a687c; --accent:#89a8ff; --accent-soft:#1c2947; --on-accent:#0e131a;
+  --good:#5fca91; --warn:#e2ac45; --bad:#ff8b80; --code-bg:#1a2230;
+  --seg1:#1f2d4d; --seg2:#2b4174; --seg3:#3b58a0;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.62 var(--body)}
+a{color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.top{background:var(--surface);border-bottom:1px solid var(--line)}
+.top-inner{max-width:1180px;margin:0 auto;padding:40px 20px 30px}
+.eyebrow{font:500 13px/1 var(--mono);color:var(--accent);letter-spacing:.05em;text-transform:uppercase}
+h1{font:700 clamp(32px,5vw,50px)/1.08 var(--display);margin:12px 0;letter-spacing:-.015em;text-wrap:balance}
+.lede{max-width:68ch;color:var(--muted);font-size:18px;margin:0}
+.status{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+.pill{font:500 13px/1 var(--body);padding:7px 11px;border-radius:999px;border:1px solid var(--line);background:var(--bg)}
+.pill.ok{color:var(--good)} .pill.wait{color:var(--warn)}
+.wrap{max-width:1180px;margin:0 auto;padding:32px 20px 80px;display:grid;grid-template-columns:200px minmax(0,1fr);gap:52px;align-items:start}
+nav.toc{position:sticky;top:18px;font-size:14px}
+nav.toc .h{font:600 12px var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:0 0 8px 8px}
+nav.toc ol{list-style:none;margin:0;padding:0;display:grid;gap:1px}
+nav.toc a{display:flex;gap:10px;padding:4px 8px;border-radius:6px;color:var(--muted);text-decoration:none;line-height:1.45}
+nav.toc a:hover,nav.toc a:focus-visible{background:var(--surface);color:var(--ink)}
+nav.toc .n{font:12px/1.75 var(--mono);color:var(--accent);min-width:20px}
+main{min-width:0}
+main section{margin-bottom:68px;scroll-margin-top:16px}
+h2{font:700 29px/1.2 var(--display);margin:0 0 6px;text-wrap:balance;display:flex;gap:14px;align-items:baseline;letter-spacing:-.01em}
+h2 .n{font:500 14px var(--mono);color:var(--accent);flex:none}
+.sub{color:var(--muted);margin:0 0 20px;max-width:68ch;font-size:17px}
+h3{font:600 19px/1.3 var(--display);margin:30px 0 8px;text-wrap:balance}
+p,li{max-width:72ch}
+ul,ol{padding-left:22px}
+li{margin:4px 0}
+code{font:.88em var(--mono);background:var(--code-bg);padding:1px 5px;border-radius:4px}
+pre{font:13.5px/1.55 var(--mono);background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px 18px;overflow-x:auto;margin:16px 0}
+pre code{background:none;padding:0;font-size:inherit}
+.cm{color:var(--muted)}
+figure{margin:20px 0 8px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px}
+.fig-scroll{overflow-x:auto}
+.fig-scroll svg{display:block;width:100%;height:auto;min-width:720px}
+figcaption{color:var(--muted);font-size:14px;margin-top:12px;max-width:80ch}
+.tbl{overflow-x:auto;margin:16px 0;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:14.5px;line-height:1.5}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:600;background:var(--zone);font-size:13px;color:var(--muted)}
+tr:last-child td{border-bottom:0}
+td:first-child{font-weight:500}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:22px 0 0}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.fact b{display:block;font:700 21px/1.2 var(--display);font-variant-numeric:tabular-nums}
+.fact span{font-size:13.5px;color:var(--muted)}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px;margin:16px 0}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+.card h4{margin:0 0 6px;font:600 16px/1.3 var(--display)}
+.card p{margin:0;color:var(--muted);font-size:15px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+.chip{font-size:13px;padding:4px 10px;border-radius:999px;background:var(--surface);border:1px solid var(--line)}
+.chip.acc{background:var(--accent-soft);border-color:var(--accent)}
+.chip.gone{text-decoration:line-through;color:var(--muted)}
+.tag{font:500 12px var(--mono);padding:2px 7px;border-radius:5px;background:var(--zone);color:var(--muted);white-space:nowrap}
+.phase{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:12px;padding:18px 22px;margin:16px 0}
+.phase.opt{border-left-color:var(--line-strong);border-left-style:dashed}
+.phase header{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:baseline}
+.phase .pid{font:600 14px var(--mono);color:var(--accent)}
+.phase h3{margin:0}
+.phase .meta{font-size:13.5px;color:var(--muted)}
+.phase ol{margin:10px 0 0}
+.done{margin-top:12px;padding:10px 14px;border-radius:8px;background:var(--accent-soft);font-size:14.5px}
+.done b{color:var(--accent)}
+.callout{border:1px solid var(--line);border-left:4px solid var(--warn);background:var(--surface);border-radius:10px;padding:14px 18px;margin:16px 0}
+.callout h4{margin:0 0 6px;font:600 16px var(--display)}
+.callout ul{margin:6px 0 0}
+
+/* diagrams */
+.d{color:var(--ink);font-family:var(--body)}
+.d text{fill:currentColor;font-size:13px}
+.d .t{font-size:14px;font-weight:600}
+.d .s{font-size:12px;fill:var(--muted)}
+.d .zl{font-size:12.5px;font-weight:600;fill:var(--muted);letter-spacing:.02em}
+.d .zone{fill:var(--zone)}
+.d .box{fill:var(--surface);stroke:var(--line-strong);stroke-width:1.2}
+.d .acc{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.5}
+.d .e{stroke:currentColor;stroke-width:1.4;fill:none}
+.d .ea{stroke:var(--accent);stroke-width:1.8;fill:none}
+.d .dash{stroke-dasharray:5 4}
+.d .life{stroke:var(--line-strong);stroke-dasharray:4 5;stroke-width:1.2}
+.d .ah{fill:currentColor}
+.d .aha{fill:var(--accent)}
+.d .lbl{font-size:12px;paint-order:stroke;stroke:var(--surface);stroke-width:5px;stroke-linejoin:round}
+.d .num{font-family:var(--display);font-size:22px;font-weight:700;fill:var(--accent)}
+.d .seg1{fill:var(--seg1)} .d .seg2{fill:var(--seg2)} .d .seg3{fill:var(--seg3)}
+.d .glass{fill:var(--surface);fill-opacity:.97;stroke:var(--accent);stroke-width:1.6}
+.d .shadow{fill:var(--ink);fill-opacity:.08}
+.d .btn{fill:var(--zone);stroke:var(--line-strong)}
+.d .btna{fill:var(--accent)}
+.d .on{fill:var(--on-accent);font-weight:600}
+.d .poster{fill:var(--zone);stroke:var(--line)}
+.d .chipd{fill:var(--surface);stroke:var(--accent);stroke-width:1.2}
+.d .dot{stroke:var(--line-strong);stroke-dasharray:2 4;stroke-width:1.5}
+.d .brand{font-family:var(--display);font-size:20px;font-weight:700}
+
+@media (max-width:900px){
+  .wrap{grid-template-columns:1fr;gap:24px}
+  nav.toc{position:static}
+  nav.toc ol{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}
+}
+@media (max-width:420px){ .top-inner{padding:28px 16px 24px} .wrap{padding:24px 16px 60px} figure{padding:12px} }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="top-inner">
+    <div class="eyebrow">FlickFind v2 · implementation plan · 6 Nov 2026</div>
+    <h1>FlickFind Build Plan</h1>
+    <p class="lede">Everything we are going to build, end to end: the tools, the catalog we curate ourselves, how a chat turn works, how the app learns from you, what the app looks like, and the order we build it in. All of it runs at zero cost.</p>
+    <div class="status">
+      <span class="pill ok">Architecture approved</span>
+      <span class="pill wait">Build not started</span>
+      <span class="pill">Non-commercial passion project</span>
+      <span class="pill">Runs on your PC (RTX 3050 6 GB)</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+<nav class="toc" aria-label="Contents">
+  <p class="h">Contents</p>
+  <ol>
+    <li><a href="#overview"><span class="n">01</span>What we're building</a></li>
+    <li><a href="#fixes"><span class="n">02</span>What changes from today</a></li>
+    <li><a href="#stack"><span class="n">03</span>Technology</a></li>
+    <li><a href="#architecture"><span class="n">04</span>How the pieces fit</a></li>
+    <li><a href="#dataset"><span class="n">05</span>The catalog dataset</a></li>
+    <li><a href="#chat-turn"><span class="n">06</span>Workflow: a chat turn</a></li>
+    <li><a href="#learning"><span class="n">07</span>Workflow: learning from you</a></li>
+    <li><a href="#freshness"><span class="n">08</span>Workflow: staying fresh</a></li>
+    <li><a href="#agent"><span class="n">09</span>Workflow: web fallback</a></li>
+    <li><a href="#screens"><span class="n">10</span>The app</a></li>
+    <li><a href="#data-model"><span class="n">11</span>Data model</a></li>
+    <li><a href="#api"><span class="n">12</span>API</a></li>
+    <li><a href="#repo"><span class="n">13</span>Project layout</a></li>
+    <li><a href="#phases"><span class="n">14</span>Build plan</a></li>
+    <li><a href="#running"><span class="n">15</span>Running it</a></li>
+    <li><a href="#testing"><span class="n">16</span>Testing and quality</a></li>
+    <li><a href="#risks"><span class="n">17</span>Risks</a></li>
+    <li><a href="#assumptions"><span class="n">18</span>Assumed decisions</a></li>
+    <li><a href="#credits"><span class="n">19</span>Licences and credits</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<!-- 01 -->
+<section id="overview">
+  <h2><span class="n">01</span>What we're building</h2>
+  <p class="sub">A movie recommender you talk to, which understands your mood before it searches.</p>
+  <p>You tell FlickFind how you feel or what you want. If it needs to know more, it asks one short question with quick-reply buttons (for example: <em>laugh it off</em>, <em>have a good cry</em>, <em>stay in it</em>, <em>distract me</em>). Then it shows up to five films that really fit, each with a sentence on why. If fewer fit well, it shows fewer and offers <strong>Find more</strong>.</p>
+  <p>It learns from what you <strong>watch, rate and block</strong>, not from your watchlist. Over time it drifts from well-known picks toward niche ones if that is where your taste goes. Blocked films never come back unless you unblock them.</p>
+  <div class="facts">
+    <div class="fact"><b>₹0</b><span>running cost: free tiers and your own PC</span></div>
+    <div class="fact"><b>~100k films</b><span>our own curated catalog (count measured in Phase 1)</span></div>
+    <div class="fact"><b>150–200 MB</b><span>catalog size, down from 7 GB (estimate)</span></div>
+    <div class="fact"><b>2 AI calls</b><span>per chat turn (1 when it only asks a question)</span></div>
+    <div class="fact"><b>0–5 picks</b><span>only films that pass the fit bar, plus Find more</span></div>
+    <div class="fact"><b>P0–P8</b><span>nine build phases; P8 optional</span></div>
+  </div>
+</section>
+
+<!-- 02 -->
+<section id="fixes">
+  <h2><span class="n">02</span>What changes from today</h2>
+  <p class="sub">Every problem from your notes and from the code review, what causes it today, and what fixes it.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Problem</th><th>Cause in today's code</th><th>Fix in this plan</th></tr></thead>
+    <tbody>
+      <tr><td>New releases never appear</td><td>A frozen 7 GB snapshot</td><td>Daily TMDB sync plus a monthly rebuild (<a href="#freshness">§08</a>)</td></tr>
+      <tr><td>Nothing comes back when the catalog has no match</td><td>No way to look outside the catalog</td><td>The Find more ladder, ending in a web fallback (<a href="#agent">§09</a>)</td></tr>
+      <tr><td>The same films keep repeating</td><td>The popularity score outweighs mood; only the last batch is excluded</td><td>Everything shown this session is excluded, films shown in past sessions get a fading penalty, results are spread apart, and popularity follows your niche score</td></tr>
+      <tr><td>One outlier in every five</td><td>25 random films from ranks 6–35; the AI must pick exactly 5; the AI re-types card data</td><td>Only top-ranked candidates, the AI scores each film's fit, a fit-of-7 bar, 0–5 picks, and every id checked</td></tr>
+      <tr><td>It only matches the mood</td><td>One search on your raw sentence</td><td>Step one works out what you want from the mood (lift it, cry, stay in it, escape)</td></tr>
+      <tr><td>It doesn't ask when the request is vague</td><td>The "enough context?" check ran last</td><td>Asking is now the first step</td></tr>
+      <tr><td>Catalog full of shorts and junk</td><td>An uncurated 1M-row file of unknown origin</td><td>Our own curated dataset (<a href="#dataset">§05</a>)</td></tr>
+      <tr><td>Anyone can act as any user</td><td>Endpoints trust a <code>user_id</code> the caller sends</td><td>Real login tokens (Phase 4)</td></tr>
+      <tr><td>One slow request freezes the server</td><td>Blocking work inside async routes</td><td>Blocking work moved off the event loop (Phase 3)</td></tr>
+      <tr><td>Heavy, fragile setup</td><td>PyTorch, a transformers patch, pgvector in Docker</td><td>An ONNX embedder and an in-memory catalog; no Docker</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- 03 -->
+<section id="stack">
+  <h2><span class="n">03</span>Technology</h2>
+  <p class="sub">Each choice is free, small, and something one person can run on a laptop.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Layer</th><th>Choice</th><th>Why</th><th>Replaces</th></tr></thead>
+    <tbody>
+      <tr><td>App (web + phone)</td><td>Expo with Expo Router (React Native, web build)</td><td>One codebase for browser and phone; Expo Go runs it on a phone for free</td><td>React + Vite web app</td></tr>
+      <tr><td>Backend</td><td>Python, FastAPI, Uvicorn</td><td>Already familiar; simple JSON API</td><td>(kept)</td></tr>
+      <tr><td>Catalog search</td><td>Parquet file loaded into memory, searched with numpy</td><td>100k × 256-number vectors are searched exactly in milliseconds; filters are just yes/no masks</td><td>PostgreSQL + pgvector</td></tr>
+      <tr><td>User data</td><td>SQLite through SQLAlchemy</td><td>A single file; the same code moves to Supabase Postgres later</td><td>Postgres in Docker</td></tr>
+      <tr><td>Embeddings</td><td>nomic-embed-text-v1.5 through fastembed (ONNX), 256 dimensions</td><td>Small, runs on CPU, no PyTorch</td><td>sentence-transformers + PyTorch + patch</td></tr>
+      <tr><td>Chat AI</td><td>Gemini Flash / Flash-Lite (free tier), Groq as backup</td><td>Structured JSON output, free allowances</td><td>A 4-model Gemini cascade</td></tr>
+      <tr><td>Offline AI</td><td>Ollama with a 4B-class model on your RTX 3050</td><td>Writes ~100k mood profiles with no quota</td><td>(new)</td></tr>
+      <tr><td>Dataset tooling</td><td>DuckDB, pyarrow, httpx</td><td>DuckDB queries IMDb's <code>.tsv.gz</code> files directly with SQL</td><td>pandas + psycopg2 seeders</td></tr>
+      <tr><td>Film data</td><td>IMDb datasets, TMDB API, OMDb (Rotten Tomatoes), JustWatch via TMDB</td><td>Free for non-commercial use</td><td>The 7 GB parquet</td></tr>
+      <tr><td>Catalog storage</td><td>Backblaze B2, private bucket</td><td>Keeps versioned catalog files</td><td>(new)</td></tr>
+      <tr><td>Phone access</td><td>Tailscale</td><td>Your phone reaches your PC from anywhere, privately</td><td>(new)</td></tr>
+      <tr><td>Web search</td><td>Gemini Search grounding, Tavily as backup</td><td>Free allowances for the fallback</td><td>(new)</td></tr>
+      <tr><td>Login</td><td>bcrypt + JWT tokens</td><td>Simple; no extra service</td><td>Login with no tokens</td></tr>
+      <tr><td>Tests</td><td>pytest + a set of golden mood prompts</td><td>Catches regressions in picks, not only in code</td><td>None</td></tr>
+    </tbody>
+  </table></div>
+  <h3>Removed from the project</h3>
+  <div class="chips">
+    <span class="chip gone">torch</span><span class="chip gone">transformers</span><span class="chip gone">sentence-transformers</span><span class="chip gone">pgvector</span><span class="chip gone">psycopg2-binary</span><span class="chip gone">pandas</span><span class="chip gone">Docker Postgres</span><span class="chip gone">vite</span><span class="chip gone">axios</span><span class="chip gone">tailwindcss</span><span class="chip gone">postcss</span><span class="chip gone">autoprefixer</span><span class="chip gone">seed_db.py</span><span class="chip gone">bulk_seed.py</span><span class="chip gone">init_db.py</span>
+  </div>
+  <h3>Packages</h3>
+  <div class="grid2">
+    <div class="card"><h4>Backend</h4><p><code>fastapi</code> <code>uvicorn[standard]</code> <code>pydantic</code> <code>numpy</code> <code>pyarrow</code> <code>fastembed</code> <code>google-genai</code> <code>httpx</code> <code>sqlalchemy</code> <code>bcrypt</code> <code>pyjwt</code> <code>boto3</code> <code>python-dotenv</code></p></div>
+    <div class="card"><h4>Dataset builder</h4><p><code>duckdb</code> <code>httpx</code> <code>pyarrow</code> <code>numpy</code> <code>fastembed</code> <code>boto3</code>, plus the Ollama app (called over its local HTTP API)</p></div>
+    <div class="card"><h4>App</h4><p><code>expo</code> <code>expo-router</code> <code>react-native</code> <code>react-native-web</code> <code>react-dom</code> <code>expo-image</code> <code>expo-blur</code> <code>expo-secure-store</code></p></div>
+    <div class="card"><h4>Tools on your PC</h4><p>Python 3.11+, Node 20+, git, NVIDIA driver (installed), <code>ollama-cuda</code>, Expo CLI, Tailscale on PC and phone. Tests: <code>pytest</code>.</p></div>
+  </div>
+</section>
+
+<!-- 04 -->
+<section id="architecture">
+  <h2><span class="n">04</span>How the pieces fit</h2>
+  <p class="sub">Building the catalog and serving the app run at different times. The only link between them is one file in a bucket.</p>
+  <figure>
+    <div class="fig-scroll">
+    <svg class="d" viewBox="0 0 1000 530" role="img" aria-label="Architecture: an offline builder on your PC makes a catalog file and uploads it to a private B2 bucket; the FastAPI backend loads it into memory at startup and serves the web and phone apps; the backend calls Gemini, Groq, TMDB, OMDb and Tavily.">
+      <defs>
+        <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+        <marker id="a1b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="aha"/></marker>
+      </defs>
+      <rect class="zone" x="10" y="40" width="290" height="480" rx="12"/>
+      <text class="zl" x="26" y="66">1 · BUILD (OFFLINE, YOUR PC)</text>
+      <rect class="zone" x="330" y="40" width="150" height="330" rx="12"/>
+      <text class="zl" x="346" y="66">2 · STORE</text>
+      <rect class="zone" x="510" y="40" width="290" height="330" rx="12"/>
+      <text class="zl" x="526" y="66">3 · SERVE (YOUR PC)</text>
+      <rect class="zone" x="830" y="40" width="160" height="330" rx="12"/>
+      <text class="zl" x="846" y="66">4 · USE</text>
+      <rect class="zone" x="330" y="395" width="660" height="125" rx="12"/>
+      <text class="zl" x="346" y="510">EXTERNAL SERVICES · FREE TIERS</text>
+
+      <rect class="box" x="30" y="90" width="250" height="56" rx="8"/>
+      <text class="t" x="155" y="114" text-anchor="middle">IMDb files + TMDB API</text>
+      <text class="s" x="155" y="133" text-anchor="middle">raw film data</text>
+      <rect class="box" x="30" y="180" width="250" height="56" rx="8"/>
+      <text class="t" x="155" y="204" text-anchor="middle">Dataset builder</text>
+      <text class="s" x="155" y="223" text-anchor="middle">DuckDB · local AI · fastembed</text>
+      <rect class="acc" x="30" y="270" width="250" height="56" rx="8"/>
+      <text class="t" x="155" y="294" text-anchor="middle">catalog.parquet + manifest</text>
+      <text class="s" x="155" y="313" text-anchor="middle">about 150–200 MB (estimate)</text>
+      <rect class="box" x="30" y="430" width="250" height="56" rx="8"/>
+      <text class="t" x="155" y="454" text-anchor="middle">Scheduled jobs</text>
+      <text class="s" x="155" y="473" text-anchor="middle">daily new releases · monthly rebuild</text>
+      <line class="e" x1="155" y1="146" x2="155" y2="178" marker-end="url(#a1)"/>
+      <text class="lbl" x="165" y="167">fetch + curate</text>
+      <line class="e" x1="155" y1="236" x2="155" y2="268" marker-end="url(#a1)"/>
+      <text class="lbl" x="165" y="257">profile + embed</text>
+      <path class="e dash" d="M30,458 L20,458 L20,208 L28,208" marker-end="url(#a1)"/>
+
+      <rect class="box" x="345" y="270" width="120" height="56" rx="8"/>
+      <text class="t" x="405" y="294" text-anchor="middle">Backblaze B2</text>
+      <text class="s" x="405" y="313" text-anchor="middle">private bucket</text>
+      <line class="ea" x1="280" y1="298" x2="343" y2="298" marker-end="url(#a1b)"/>
+      <text class="lbl" x="312" y="289" text-anchor="middle">upload</text>
+
+      <rect class="acc" x="530" y="90" width="250" height="56" rx="8"/>
+      <text class="t" x="655" y="114" text-anchor="middle">Chat engine (FastAPI)</text>
+      <text class="s" x="655" y="133" text-anchor="middle">understand · search · judge</text>
+      <rect class="box" x="530" y="200" width="118" height="70" rx="8"/>
+      <text class="t" x="589" y="226" text-anchor="middle">Catalog</text>
+      <text class="s" x="589" y="245" text-anchor="middle">in memory</text>
+      <text class="s" x="589" y="261" text-anchor="middle">numpy search</text>
+      <rect class="box" x="662" y="200" width="118" height="70" rx="8"/>
+      <text class="t" x="721" y="226" text-anchor="middle">SQLite</text>
+      <text class="s" x="721" y="245" text-anchor="middle">accounts, ratings,</text>
+      <text class="s" x="721" y="261" text-anchor="middle">blocks, history</text>
+      <line class="e" x1="589" y1="146" x2="589" y2="198" marker-end="url(#a1)"/>
+      <text class="lbl" x="597" y="176">search</text>
+      <line class="e" x1="721" y1="146" x2="721" y2="198" marker-end="url(#a1)"/>
+      <text class="lbl" x="729" y="176">user data</text>
+      <path class="ea" d="M465,298 L497,298 L497,235 L528,235" marker-end="url(#a1b)"/>
+      <text class="lbl" x="481" y="289" text-anchor="middle">load</text>
+      <text class="s" x="655" y="310" text-anchor="middle">loads the newest catalog at startup</text>
+      <text class="s" x="655" y="328" text-anchor="middle">and when the manifest changes</text>
+
+      <rect class="box" x="845" y="90" width="130" height="56" rx="8"/>
+      <text class="t" x="910" y="114" text-anchor="middle">Web app</text>
+      <text class="s" x="910" y="133" text-anchor="middle">Expo web build</text>
+      <rect class="box" x="845" y="180" width="130" height="56" rx="8"/>
+      <text class="t" x="910" y="204" text-anchor="middle">Phone app</text>
+      <text class="s" x="910" y="223" text-anchor="middle">Expo Go or APK</text>
+      <text class="s" x="910" y="256" text-anchor="middle">over Tailscale</text>
+      <line class="e" x1="845" y1="118" x2="782" y2="118" marker-end="url(#a1)"/>
+      <text class="lbl" x="813" y="109" text-anchor="middle">API</text>
+      <path class="e" d="M845,208 L812,208 L812,134 L782,134" marker-end="url(#a1)"/>
+
+      <line class="e" x1="655" y1="370" x2="655" y2="420"/>
+      <text class="lbl" x="663" y="388">calls out</text>
+      <line class="e" x1="420" y1="420" x2="900" y2="420"/>
+      <line class="e" x1="420" y1="420" x2="420" y2="430" marker-end="url(#a1)"/>
+      <line class="e" x1="580" y1="420" x2="580" y2="430" marker-end="url(#a1)"/>
+      <line class="e" x1="740" y1="420" x2="740" y2="430" marker-end="url(#a1)"/>
+      <line class="e" x1="900" y1="420" x2="900" y2="430" marker-end="url(#a1)"/>
+      <rect class="box" x="350" y="432" width="140" height="56" rx="8"/>
+      <text class="t" x="420" y="456" text-anchor="middle">Gemini</text>
+      <text class="s" x="420" y="475" text-anchor="middle">chat AI · web search</text>
+      <rect class="box" x="510" y="432" width="140" height="56" rx="8"/>
+      <text class="t" x="580" y="456" text-anchor="middle">Groq</text>
+      <text class="s" x="580" y="475" text-anchor="middle">backup chat AI</text>
+      <rect class="box" x="670" y="432" width="140" height="56" rx="8"/>
+      <text class="t" x="740" y="456" text-anchor="middle">TMDB · OMDb</text>
+      <text class="s" x="740" y="475" text-anchor="middle">details · RT scores</text>
+      <rect class="box" x="830" y="432" width="140" height="56" rx="8"/>
+      <text class="t" x="900" y="456" text-anchor="middle">Tavily</text>
+      <text class="s" x="900" y="475" text-anchor="middle">backup web search</text>
+    </svg>
+    </div>
+    <figcaption>The builder runs on your PC, offline and on a schedule. It produces one versioned catalog file and uploads it to B2. The backend downloads that file at startup, keeps it in memory, and serves the web and phone apps. Your phone reaches it through Tailscale. Highlighted: the catalog file and the chat engine, the two things everything else depends on.</figcaption>
+  </figure>
+  <div class="grid2">
+    <div class="card"><h4>1 · Build</h4><p>Scripts turn IMDb and TMDB data into a curated catalog. Your GPU writes a mood profile for each film, and fastembed turns it into a vector.</p></div>
+    <div class="card"><h4>2 · Store</h4><p>A private B2 bucket keeps each catalog version. It is a delivery point; nothing searches it directly.</p></div>
+    <div class="card"><h4>3 · Serve</h4><p>FastAPI holds the catalog in RAM, keeps user data in SQLite, and calls the AI only to understand you and to judge candidates.</p></div>
+    <div class="card"><h4>4 · Use</h4><p>One Expo app runs in the browser and on your phone. It only ever talks to the backend.</p></div>
+  </div>
+</section>
+
+<!-- 05 -->
+<section id="dataset">
+  <h2><span class="n">05</span>The catalog dataset</h2>
+  <p class="sub">We build our own catalog, keeping only what the app uses: finding films by mood, filtering, showing cards, and explaining picks.</p>
+
+  <h3>What goes in</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>Group</th><th>Rule</th><th class="num">Starting vote floor</th></tr></thead>
+    <tbody>
+      <tr><td>English</td><td>Original language English</td><td class="num">200</td></tr>
+      <tr><td>Japanese</td><td>Original language Japanese</td><td class="num">100</td></tr>
+      <tr><td>European (MUBI/Tubi-style)</td><td>French, German, Italian, Spanish, Portuguese, Dutch, Swedish, Danish, Norwegian, Finnish, Icelandic, Polish, Czech, Slovak, Hungarian, Romanian, Greek, Ukrainian, Serbian, Croatian, Slovenian, Bulgarian, Catalan and other European languages</td><td class="num">50</td></tr>
+      <tr><td>Indian, well known</td><td>Produced in India, any language (Hindi, Tamil, Telugu, Malayalam, Kannada, Bengali, Marathi…)</td><td class="num">5,000</td></tr>
+      <tr><td>Documentaries</td><td>Always included, in any of the languages above</td><td class="num">50</td></tr>
+      <tr><td>Animation</td><td>Always included; uses its language group's floor</td><td class="num">per group</td></tr>
+      <tr><td>Every film</td><td>IMDb type <code>movie</code> or <code>tvMovie</code> · 60+ minutes · not adult · TMDB <code>video</code> is false · released · synopsis of at least 15 words</td><td class="num">–</td></tr>
+    </tbody>
+  </table></div>
+  <p>Vote floors are starting points. Step 3 prints how many films survive at each floor for each group, and you pick the final numbers from that report.</p>
+
+  <h3>The build pipeline</h3>
+  <figure>
+    <div class="fig-scroll">
+    <svg class="d" viewBox="0 0 1070 270" role="img" aria-label="Dataset pipeline in seven steps: gather from IMDb, fetch from TMDB, curate, write mood profiles, embed, package, upload; a build report is produced after every run.">
+      <defs><marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker></defs>
+      <g>
+        <rect class="box" x="10" y="20" width="136" height="140" rx="10"/>
+        <text class="num" x="24" y="50">1</text><text class="t" x="24" y="76">Gather</text>
+        <text class="s" x="24" y="98">IMDb files</text><text class="s" x="24" y="116">movie + TV movie</text><text class="s" x="24" y="134">60+ min, not adult</text>
+        <rect class="btn" x="10" y="172" width="136" height="26" rx="13"/><text class="s" x="78" y="190" text-anchor="middle">DuckDB</text>
+      </g>
+      <line class="e" x1="146" y1="90" x2="160" y2="90" marker-end="url(#a2)"/>
+      <g>
+        <rect class="box" x="162" y="20" width="136" height="140" rx="10"/>
+        <text class="num" x="176" y="50">2</text><text class="t" x="176" y="76">Fetch</text>
+        <text class="s" x="176" y="98">TMDB details</text><text class="s" x="176" y="116">credits, keywords</text><text class="s" x="176" y="134">reviews, providers</text>
+        <rect class="btn" x="162" y="172" width="136" height="26" rx="13"/><text class="s" x="230" y="190" text-anchor="middle">httpx · cached</text>
+      </g>
+      <line class="e" x1="298" y1="90" x2="312" y2="90" marker-end="url(#a2)"/>
+      <g>
+        <rect class="acc" x="314" y="20" width="136" height="140" rx="10"/>
+        <text class="num" x="328" y="50">3</text><text class="t" x="328" y="76">Curate</text>
+        <text class="s" x="328" y="98">language scope</text><text class="s" x="328" y="116">vote floors</text><text class="s" x="328" y="134">count report</text>
+        <rect class="btn" x="314" y="172" width="136" height="26" rx="13"/><text class="s" x="382" y="190" text-anchor="middle">DuckDB</text>
+      </g>
+      <line class="e" x1="450" y1="90" x2="464" y2="90" marker-end="url(#a2)"/>
+      <g>
+        <rect class="acc" x="466" y="20" width="136" height="140" rx="10"/>
+        <text class="num" x="480" y="50">4</text><text class="t" x="480" y="76">Mood profile</text>
+        <text class="s" x="480" y="98">tags, effect, pace</text><text class="s" x="480" y="116">intensity</text><text class="s" x="480" y="134">“watch when” line</text>
+        <rect class="btn" x="466" y="172" width="136" height="26" rx="13"/><text class="s" x="534" y="190" text-anchor="middle">Ollama on RTX 3050</text>
+      </g>
+      <line class="e" x1="602" y1="90" x2="616" y2="90" marker-end="url(#a2)"/>
+      <g>
+        <rect class="box" x="618" y="20" width="136" height="140" rx="10"/>
+        <text class="num" x="632" y="50">5</text><text class="t" x="632" y="76">Embed</text>
+        <text class="s" x="632" y="98">mood document</text><text class="s" x="632" y="116">→ 256 numbers</text><text class="s" x="632" y="134">half precision</text>
+        <rect class="btn" x="618" y="172" width="136" height="26" rx="13"/><text class="s" x="686" y="190" text-anchor="middle">fastembed (ONNX)</text>
+      </g>
+      <line class="e" x1="754" y1="90" x2="768" y2="90" marker-end="url(#a2)"/>
+      <g>
+        <rect class="box" x="770" y="20" width="136" height="140" rx="10"/>
+        <text class="num" x="784" y="50">6</text><text class="t" x="784" y="76">Package</text>
+        <text class="s" x="784" y="98">catalog.parquet</text><text class="s" x="784" y="116">+ manifest.json</text><text class="s" x="784" y="134">dated version</text>
+        <rect class="btn" x="770" y="172" width="136" height="26" rx="13"/><text class="s" x="838" y="190" text-anchor="middle">pyarrow</text>
+      </g>
+      <line class="e" x1="906" y1="90" x2="920" y2="90" marker-end="url(#a2)"/>
+      <g>
+        <rect class="box" x="922" y="20" width="136" height="140" rx="10"/>
+        <text class="num" x="936" y="50">7</text><text class="t" x="936" y="76">Upload</text>
+        <text class="s" x="936" y="98">private B2 bucket</text><text class="s" x="936" y="116">backend pulls it</text><text class="s" x="936" y="134">at startup</text>
+        <rect class="btn" x="922" y="172" width="136" height="26" rx="13"/><text class="s" x="990" y="190" text-anchor="middle">boto3</text>
+      </g>
+      <rect class="zone" x="10" y="218" width="1048" height="40" rx="10"/>
+      <text x="534" y="243" text-anchor="middle">Build report after every run: count per step · drops per rule · language and decade spread · 100-row spot check · golden mood prompts</text>
+    </svg>
+    </div>
+    <figcaption>Steps 3 and 4 are where the catalog becomes yours: step 3 decides which films exist at all, and step 4 describes each one by mood rather than by genre.</figcaption>
+  </figure>
+  <ol>
+    <li><strong>Gather.</strong> Download IMDb's <code>title.basics</code> and <code>title.ratings</code>. Keep <code>movie</code> and <code>tvMovie</code>, 60+ minutes, not adult, with at least 20 votes (a loose first cut).</li>
+    <li><strong>Fetch.</strong> Find each film on TMDB by its IMDb id, then fetch its details in one call with <code>append_to_response=credits,keywords,release_dates,watch/providers,reviews</code>. Every raw response is saved, so a rebuild doesn't call the API again. Shortcut: your old parquet already pairs TMDB ids with IMDb ids, which skips most lookups.</li>
+    <li><strong>Curate.</strong> Apply the language scope, the vote floors, the <code>video</code> flag, the released status and the synopsis-length rule. Print the count report and pick the floors.</li>
+    <li><strong>Mood profile.</strong> The local AI reads the synopsis, tagline, genres, keywords and up to 3 review excerpts, about 20 films per call, and returns a structured profile (below).</li>
+    <li><strong>Embed.</strong> Build each film's mood document and turn it into a vector of 256 numbers.</li>
+    <li><strong>Package.</strong> Write <code>catalog-vYYYYMMDD.parquet</code> and <code>manifest.json</code>.</li>
+    <li><strong>Upload</strong> to the private B2 bucket.</li>
+  </ol>
+
+  <h3>Mood profile: the heart of the catalog</h3>
+  <p>Every film gets the same structured description, using a fixed vocabulary so profiles can be compared and filtered. The vocabulary has about 60 tags, finalised in Phase 2. Effects:</p>
+  <div class="chips">
+    <span class="chip acc">lift</span><span class="chip acc">catharsis</span><span class="chip acc">comfort</span><span class="chip acc">tension</span><span class="chip acc">escape</span><span class="chip acc">provoke</span><span class="chip acc">numb</span>
+  </div>
+  <p>Sample tags:</p>
+  <div class="chips">
+    <span class="chip">melancholic</span><span class="chip">bittersweet</span><span class="chip">uplifting</span><span class="chip">cozy</span><span class="chip">eerie</span><span class="chip">dreamlike</span><span class="chip">tender</span><span class="chip">bleak</span><span class="chip">whimsical</span><span class="chip">nostalgic</span><span class="chip">lonely</span><span class="chip">awe-inspiring</span><span class="chip">slow-burn</span><span class="chip">meditative</span><span class="chip">frantic</span><span class="chip">grief</span><span class="chip">coming of age</span><span class="chip">family</span><span class="chip">survival</span><span class="chip">identity</span>
+  </div>
+<pre><code>{
+  "mood_tags": ["melancholic", "tender", "bittersweet"],
+  "effect": "catharsis",
+  "pace": "slow",
+  "intensity": 2,
+  "watch_when": "you want to sit with sadness rather than escape it",
+  "confidence": "high"      <span class="cm">// "low" when the source text is thin; ranking trusts it less</span>
+}</code></pre>
+  <p>Before the full run we hold a <strong>50-film bake-off</strong>: the local model and Gemini write profiles for the same films, and you compare them side by side. The full run then goes on your GPU, with checkpoints so it can stop and resume.</p>
+
+  <h3>Mood document and vector</h3>
+<pre><code>search_document: Tokyo Story (1953). Drama. Japanese.
+Mood: melancholic, tender, quiet. Effect: catharsis. Pace: slow.
+Keywords: aging parents, generation gap, family.
+Watch when: you want to sit with sadness rather than escape it.
+Synopsis: An elderly couple travels to Tokyo to visit their grown children ...</code></pre>
+  <ul>
+    <li>Embedded with nomic-embed-text-v1.5 (ONNX), prefix <code>search_document:</code>, cut to <strong>256 dimensions</strong> and stored at half precision. Nomic loses only about 1.2 benchmark points at 256 versus 768.</li>
+    <li>The model, prefix and size are written into <code>manifest.json</code>. The backend <strong>refuses to start</strong> if its embedder doesn't match, so search can never silently break.</li>
+  </ul>
+
+  <h3>Columns</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>Column</th><th>From</th><th>Used for</th></tr></thead>
+    <tbody>
+      <tr><td><code>tmdb_id</code>, <code>imdb_id</code></td><td>TMDB, IMDb</td><td>Identity, links, lookups</td></tr>
+      <tr><td><code>title</code>, <code>original_title</code>, <code>year</code>, <code>runtime</code>, <code>title_type</code></td><td>IMDb, TMDB</td><td>Cards, filters</td></tr>
+      <tr><td><code>language</code>, <code>countries</code>, <code>genres</code>, <code>keywords</code></td><td>TMDB</td><td>Scope, language blocks, genre preferences</td></tr>
+      <tr><td><code>overview</code>, <code>tagline</code>, <code>poster_path</code></td><td>TMDB</td><td>Cards, mood document</td></tr>
+      <tr><td><code>director</code>, <code>cinematographer</code>, <code>composer</code>, <code>writers</code>, <code>cast_top5</code> (names + ids)</td><td>TMDB credits</td><td>Card details, actor blocks</td></tr>
+      <tr><td><code>imdb_rating</code>, <code>imdb_votes</code>, <code>tmdb_rating</code>, <code>popularity</code></td><td>IMDb, TMDB</td><td>Ratings shown, Normal/Niche filters</td></tr>
+      <tr><td><code>obscurity</code> (0–1)</td><td>Computed from vote rank</td><td>Niche drift</td></tr>
+      <tr><td><code>mood_tags</code>, <code>effect</code>, <code>pace</code>, <code>intensity</code>, <code>watch_when</code>, <code>mood_confidence</code></td><td>Mood profile</td><td>Filters, scoring, "why" text</td></tr>
+      <tr><td><code>providers_in</code></td><td>TMDB / JustWatch</td><td>Where to watch (India)</td></tr>
+      <tr><td><code>vec</code> (256 × float16)</td><td>fastembed</td><td>Mood search</td></tr>
+      <tr><td><code>source</code>, <code>updated_at</code></td><td>Builder</td><td>Dataset, daily, or agent; 6-month refresh rule</td></tr>
+    </tbody>
+  </table></div>
+  <p>Rotten Tomatoes scores are <strong>not</strong> stored in bulk. They are fetched from OMDb when you open a film, then cached for 30 days.</p>
+
+  <h3>Size</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>Part</th><th>Calculation</th><th class="num">Size at 100k films</th></tr></thead>
+    <tbody>
+      <tr><td>Vectors</td><td>100,000 × 256 numbers × 2 bytes</td><td class="num">≈ 51 MB</td></tr>
+      <tr><td>Metadata</td><td>about 1–1.5 KB per film after compression</td><td class="num">≈ 100–150 MB</td></tr>
+      <tr><td>Total</td><td>fits in RAM; exact search takes a few milliseconds</td><td class="num">≈ 150–200 MB</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- 06 -->
+<section id="chat-turn">
+  <h2><span class="n">06</span>Workflow: one chat turn</h2>
+  <p class="sub">Two AI calls with a fast, exact search between them. The first call can stop early to ask a question.</p>
+  <figure>
+    <div class="fig-scroll">
+    <svg class="d" viewBox="0 0 1000 600" role="img" aria-label="Sequence of one chat turn: the app sends a message; AI call 1 returns an intent or a question; the catalog returns the top 200 films; the backend scores them down to 25; AI call 2 returns fit scores; the backend returns up to five cards.">
+      <defs>
+        <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+        <marker id="a3b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="aha"/></marker>
+      </defs>
+      <rect class="box" x="15" y="20" width="150" height="44" rx="8"/><text class="t" x="90" y="47" text-anchor="middle">Your app</text>
+      <rect class="acc" x="225" y="20" width="150" height="44" rx="8"/><text class="t" x="300" y="47" text-anchor="middle">Backend</text>
+      <rect class="box" x="425" y="20" width="150" height="44" rx="8"/><text class="t" x="500" y="39" text-anchor="middle">AI call 1</text><text class="s" x="500" y="56" text-anchor="middle">understand</text>
+      <rect class="box" x="625" y="20" width="150" height="44" rx="8"/><text class="t" x="700" y="39" text-anchor="middle">Catalog</text><text class="s" x="700" y="56" text-anchor="middle">numpy search</text>
+      <rect class="box" x="825" y="20" width="150" height="44" rx="8"/><text class="t" x="900" y="39" text-anchor="middle">AI call 2</text><text class="s" x="900" y="56" text-anchor="middle">judge</text>
+      <line class="life" x1="90" y1="64" x2="90" y2="590"/>
+      <line class="life" x1="300" y1="64" x2="300" y2="590"/>
+      <line class="life" x1="500" y1="64" x2="500" y2="590"/>
+      <line class="life" x1="700" y1="64" x2="700" y2="590"/>
+      <line class="life" x1="900" y1="64" x2="900" y2="590"/>
+
+      <line class="e" x1="90" y1="100" x2="298" y2="100" marker-end="url(#a3)"/>
+      <text class="lbl" x="195" y="93" text-anchor="middle">your message</text>
+      <line class="e" x1="300" y1="140" x2="498" y2="140" marker-end="url(#a3)"/>
+      <text class="lbl" x="400" y="133" text-anchor="middle">chat + your preferences</text>
+      <line class="e dash" x1="500" y1="180" x2="302" y2="180" marker-end="url(#a3)"/>
+      <text class="lbl" x="400" y="173" text-anchor="middle">intent (JSON)</text>
+      <text class="s" x="508" y="162">≈ 1–2 s</text>
+
+      <rect x="20" y="198" width="380" height="72" rx="6" class="e dash"/>
+      <text class="s" x="30" y="215">if it needs more info, stop here</text>
+      <line class="ea" x1="300" y1="250" x2="92" y2="250" marker-end="url(#a3b)"/>
+      <text class="lbl" x="195" y="243" text-anchor="middle">question + quick-reply chips</text>
+
+      <line class="e" x1="300" y1="300" x2="698" y2="300" marker-end="url(#a3)"/>
+      <text class="lbl" x="560" y="293" text-anchor="middle">1–3 synopsis vectors + filters</text>
+      <line class="e dash" x1="700" y1="340" x2="302" y2="340" marker-end="url(#a3)"/>
+      <text class="lbl" x="560" y="333" text-anchor="middle">top 200 films</text>
+      <text class="s" x="708" y="322">&lt; 50 ms</text>
+      <rect class="box" x="310" y="356" width="170" height="34" rx="6"/>
+      <text x="395" y="378" text-anchor="middle">score + spread → 25</text>
+
+      <line class="e" x1="300" y1="430" x2="898" y2="430" marker-end="url(#a3)"/>
+      <text class="lbl" x="660" y="423" text-anchor="middle">25 candidates, one line each</text>
+      <line class="e dash" x1="900" y1="470" x2="302" y2="470" marker-end="url(#a3)"/>
+      <text class="lbl" x="660" y="463" text-anchor="middle">{id, fit 0–10, why}</text>
+      <text class="s" x="908" y="452">≈ 2–4 s</text>
+      <rect class="box" x="310" y="486" width="180" height="34" rx="6"/>
+      <text x="400" y="508" text-anchor="middle">fit ≥ 7 · max 5 · ids ok</text>
+
+      <line class="ea" x1="300" y1="560" x2="92" y2="560" marker-end="url(#a3b)"/>
+      <text class="lbl" x="195" y="553" text-anchor="middle">0–5 cards + Find more</text>
+    </svg>
+    </div>
+    <figcaption>One turn from message to cards. Timings are estimates for free-tier models. The search itself is fast; the two AI calls take almost all of the time.</figcaption>
+  </figure>
+
+  <h3>Step 1 · Understand (AI call 1)</h3>
+  <p>A cheap model reads the chat so far plus a short summary of your preferences, and returns:</p>
+<pre><code>{
+  "action": "ask",                  <span class="cm">// ask | recommend | more | chat</span>
+  "question": "Feeling low. What would help tonight?",
+  "chips": ["Laugh it off", "Have a good cry", "Stay in it", "Distract me"],
+  "mood": "sad, tired",
+  "effect": null,                   <span class="cm">// lift | catharsis | comfort | tension | escape | provoke | numb</span>
+  "synopses": [],                   <span class="cm">// 1–3 imagined film synopses that would fit</span>
+  "filters": {"languages": [], "year_min": null, "year_max": null,
+              "runtime_max": null, "genres": [], "not_genres": []},
+  "needs_fresh": false              <span class="cm">// true for "new", "this year", "in theatres"</span>
+}</code></pre>
+  <ul>
+    <li><strong>When it asks:</strong> the effect is unknown and you described a feeling ("I'm sad"), or the request is too vague ("something good"). It asks at most two questions in a row, then makes its best guess and says what it assumed.</li>
+    <li><strong>Quick replies map to effects:</strong> Laugh it off → <em>lift</em> · Have a good cry → <em>catharsis</em> · Stay in it → <em>numb</em> · Distract me → <em>escape</em> · Comfort me → <em>comfort</em>.</li>
+    <li>The understood intent is <strong>saved with the chat</strong>, so Find more can reuse it without another AI call.</li>
+  </ul>
+
+  <h3>Step 2 · Search</h3>
+  <ul>
+    <li>Each imagined synopsis is embedded the same way as catalog films, because it imitates one. Your raw message is embedded too, as a query. A film's mood score is its best match against any of them. We confirm this setup with the golden prompts.</li>
+    <li><strong>Filters run first, as a mask:</strong> not blocked, not watched, not shown in this chat, not in an avoided language, no avoided actor in the top-5 cast, at least the vote floor for your niche score, plus the intent's own filters (years, runtime, genres).</li>
+    <li>The top 200 films by mood score go on to scoring.</li>
+  </ul>
+
+  <h3>Step 3 · Score and spread</h3>
+<pre><code>score = mood_match
+      + 0.35 × liked_profile_match   − 0.35 × disliked_profile_match
+      + 0.10 × favourite_genre       − 0.15 × avoided_genre
+      + popularity_weight(n) × popularity
+      − 0.20 × shown_before          <span class="cm">// fades to 0 over 30 days</span></code></pre>
+  <p>Weights are starting values, tuned with the golden prompts. Then a spreading step (MMR) picks 25 films that score well but aren't near-copies of each other. This is what stops "five slow Japanese family dramas" when one would do.</p>
+
+  <h3>Step 4 · Judge (AI call 2)</h3>
+  <p>The AI sees the 25 candidates, one compact line each, and returns <strong>only ids, scores and reasons</strong>:</p>
+<pre><code>[{"id": 18148, "fit": 9, "why": "A quiet, aching film about parents and grown children drifting apart."},
+ {"id": 12477, "fit": 8, "why": "..."},
+ {"id": 603,   "fit": 3}]</code></pre>
+  <ul>
+    <li>Scoring guide given to the AI: <strong>10</strong> delivers exactly the feeling you asked for · <strong>7</strong> clearly fits · <strong>4</strong> only the genre overlaps.</li>
+    <li>A film is shown if it scores <strong>7 or more</strong> and is within <strong>2 points of the best</strong>. At most 5 are shown.</li>
+    <li>Any id that wasn't among the 25 is thrown away. Card details always come from the catalog, never from the AI.</li>
+    <li>Shown films are saved as <em>impressions</em> so they don't repeat.</li>
+  </ul>
+
+  <h3>Find more</h3>
+  <figure>
+    <div class="fig-scroll">
+    <svg class="d" viewBox="0 0 1000 110" role="img" aria-label="Find more tries four steps in order: go deeper in the same search, widen the vote floor, ask the web, and finally say nothing new fits.">
+      <defs><marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker></defs>
+      <rect class="box" x="10" y="20" width="220" height="66" rx="10"/><text class="t" x="26" y="46">1 · Go deeper</text><text class="s" x="26" y="68">next 25 from the same search</text>
+      <line class="e" x1="230" y1="53" x2="260" y2="53" marker-end="url(#a4)"/>
+      <rect class="box" x="262" y="20" width="220" height="66" rx="10"/><text class="t" x="278" y="46">2 · Widen</text><text class="s" x="278" y="68">lower the vote floor one step</text>
+      <line class="e" x1="482" y1="53" x2="512" y2="53" marker-end="url(#a4)"/>
+      <rect class="acc" x="514" y="20" width="220" height="66" rx="10"/><text class="t" x="530" y="46">3 · Ask the web</text><text class="s" x="530" y="68">web fallback (Phase 7)</text>
+      <line class="e" x1="734" y1="53" x2="764" y2="53" marker-end="url(#a4)"/>
+      <rect class="box" x="766" y="20" width="220" height="66" rx="10"/><text class="t" x="782" y="46">4 · Be honest</text><text class="s" x="782" y="68">say nothing new fits; suggest a tweak</text>
+    </svg>
+    </div>
+    <figcaption>Find more reuses the saved intent, skips AI call 1, and moves to the next step only when the current one yields no film that passes the fit bar.</figcaption>
+  </figure>
+  <p><strong>AI budget:</strong> 2 calls per turn, 1 when it only asks a question, and 1 for Find more. When Gemini's free limit runs out, the same prompts go to Groq.</p>
+</section>
+
+<!-- 07 -->
+<section id="learning">
+  <h2><span class="n">07</span>Workflow: learning from you</h2>
+  <p class="sub">Each action changes something specific. The watchlist changes nothing until you watch the film.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Your action</th><th>What changes</th></tr></thead>
+    <tbody>
+      <tr><td>+ Watchlist (same as "Gonna watch")</td><td>Nothing in recommendations, as you specified</td></tr>
+      <tr><td>Watched, 4–5★</td><td>The film joins your <strong>liked profile</strong> (5★ counts 1.5×); your niche score moves toward the film's obscurity; the film is never recommended again</td></tr>
+      <tr><td>Watched, 3★</td><td>Neutral; never recommended again</td></tr>
+      <tr><td>Watched, 1–2★</td><td>The film joins your <strong>disliked profile</strong>; a small step back toward Normal if the film was obscure</td></tr>
+      <tr><td>Niche question: "how well did it match your mood?"</td><td>Saved as a quality score for the recommender; used to tune the fit bar</td></tr>
+      <tr><td>Niche question: "what mindset should a viewer be in?"</td><td>Saved as a <strong>mood note on the film</strong>; added to its mood document at the next monthly rebuild</td></tr>
+      <tr><td>Block: already watched</td><td>Hidden; marked watched; you're asked to rate it later (optional)</td></tr>
+      <tr><td>Block: language</td><td>Asks "avoid all films in this language?" and, if yes, filters them out</td></tr>
+      <tr><td>Block: actor</td><td>You pick the actor from the cast; films with them in the top-5 cast are filtered out</td></tr>
+      <tr><td>Block: theme mismatch</td><td>The film joins your disliked profile</td></tr>
+      <tr><td>Block: too mainstream</td><td>Niche score +0.05</td></tr>
+      <tr><td>Block: other (your words)</td><td>The AI maps your text to one of the effects above and shows you which</td></tr>
+      <tr><td>Unblock (Blocked page)</td><td>The film can come back; avoided languages and actors stay until you remove them on the Preferred page</td></tr>
+      <tr><td>Preferred page</td><td>Favourite and avoided genres become score boosts and penalties. "About me" is embedded and counts as one liked film, so new users get personal picks from day one</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>Two taste profiles, not one</h3>
+  <p>Your <strong>liked profile</strong> is the average vector of films you rated well, plus "About me". Your <strong>disliked profile</strong> is the average of films you rated badly or blocked for theme. A film scores higher when it is close to the first and far from the second. Neither is ever mixed into the search vector itself, so a horror lover who asks to be cheered up still gets cheered up.</p>
+
+  <h3>Drifting from Normal to Niche</h3>
+  <figure>
+    <div class="fig-scroll">
+    <svg class="d" viewBox="0 0 1000 260" role="img" aria-label="The niche score runs from 0 to 1 across Normal, Explorer and Niche bands. As it rises, the vote floor falls from 1000 toward the dataset floor, popularity goes from a boost to a slight penalty, and from 0.5 the Watched form adds the niche questions.">
+      <text class="t" x="322" y="46" text-anchor="middle">Normal</text>
+      <text class="t" x="566" y="46" text-anchor="middle">Explorer</text>
+      <text class="t" x="814" y="46" text-anchor="middle">Niche</text>
+      <rect class="seg1" x="200" y="56" width="244" height="18" rx="4"/>
+      <rect class="seg2" x="444" y="56" width="244" height="18"/>
+      <rect class="seg3" x="688" y="56" width="252" height="18" rx="4"/>
+      <text class="s" x="200" y="94" text-anchor="middle">0</text>
+      <text class="s" x="570" y="94" text-anchor="middle">0.5</text>
+      <text class="s" x="940" y="94" text-anchor="middle">1</text>
+      <polygon class="aha" points="385,77 379,87 391,87"/>
+      <text class="s" x="385" y="102" text-anchor="middle">new users start at 0.25</text>
+      <text class="zl" x="20" y="65">NICHE SCORE n</text>
+
+      <text class="t" x="20" y="144">Vote floor</text>
+      <text x="200" y="144">≥ 1,000 votes</text>
+      <line class="dot" x1="300" y1="140" x2="530" y2="140"/>
+      <text x="570" y="144" text-anchor="middle">≈ 140</text>
+      <line class="dot" x1="610" y1="140" x2="840" y2="140"/>
+      <text x="940" y="144" text-anchor="end">dataset floor</text>
+
+      <text class="t" x="20" y="189">Popularity</text>
+      <text x="200" y="189">boosted</text>
+      <line class="dot" x1="262" y1="185" x2="590" y2="185"/>
+      <text x="644" y="189" text-anchor="middle">neutral at 0.6</text>
+      <line class="dot" x1="700" y1="185" x2="838" y2="185"/>
+      <text x="940" y="189" text-anchor="end">slight penalty</text>
+
+      <text class="t" x="20" y="233">After Watched</text>
+      <rect class="btn" x="200" y="214" width="368" height="28" rx="6"/>
+      <text x="384" y="233" text-anchor="middle">stars + optional comment</text>
+      <rect class="acc" x="572" y="214" width="368" height="28" rx="6"/>
+      <text x="756" y="233" text-anchor="middle">stars + mood match + mindset</text>
+    </svg>
+    </div>
+    <figcaption>One number per user controls three things. As it rises, more obscure films become eligible, popularity stops helping, and the Watched form asks the niche questions.</figcaption>
+  </figure>
+<pre><code>obscurity(film)  = the film's rank by IMDb votes within the catalog, 0 = hugely popular, 1 = rarely seen
+on a 4–5★ rating:  n ← n + 0.10 × (obscurity − n)         <span class="cm">// change capped at ±0.05 per day</span>
+vote_floor(n)    = e^( (1−n)·ln 1000 + n·ln dataset_floor )  <span class="cm">// 1000 → ≈140 → floor</span>
+popularity_weight(n) = clamp(0.15 × (1 − n/0.6), −0.05, 0.15)</code></pre>
+  <p>The header shows the label: <strong>Normal</strong> (below 0.33), <strong>Explorer</strong> (0.33–0.66) or <strong>Niche</strong> (above 0.66). A one-chat override ("go mainstream tonight") changes only that chat, never <code>n</code>.</p>
+</section>
+
+<!-- 08 -->
+<section id="freshness">
+  <h2><span class="n">08</span>Workflow: staying fresh</h2>
+  <p class="sub">New releases arrive through a small daily job, not through searching the web on every request.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Job</th><th>When</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td>Daily update</td><td>Every day at 04:00 (systemd timer on your PC)</td><td>Pulls TMDB's now-playing, upcoming and recently changed films. Applies the same curation rules, writes mood profiles with the local AI, embeds them, and uploads a small <code>delta</code> file. Also refreshes IMDb ratings and vote counts.</td></tr>
+      <tr><td>Monthly rebuild</td><td>1st of every month</td><td>Runs the full pipeline from cached raw data, re-fetching what changed. Folds in the daily updates and users' mood notes. Also satisfies TMDB's rule against keeping its data more than 6 months.</td></tr>
+      <tr><td>Backend reload</td><td>Hourly check</td><td>If <code>manifest.json</code> in B2 has a newer version, the backend downloads it and swaps the catalog in memory without restarting.</td></tr>
+      <tr><td>Rotten Tomatoes</td><td>When you open a film</td><td>Fetched from OMDb, then cached for 30 days. Stays well under the 1,000-a-day free limit.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- 09 -->
+<section id="agent">
+  <h2><span class="n">09</span>Workflow: web fallback</h2>
+  <p class="sub">Your agentic idea, in the form free services allow: a short, fixed pipeline that runs only when the catalog can't help.</p>
+  <div class="grid2">
+    <div class="card"><h4>When it runs</h4><p>You ask for something recent ("new this month"), or Find more has run out of catalog films, or you ask it to search the web.</p></div>
+    <div class="card"><h4>What it does</h4><p>1 web search through Gemini's built-in Google Search, with Tavily as backup · titles taken from the result snippets only · each title looked up on TMDB, unknowns dropped · mood profile + vector · AI call 2 judges them like any other film.</p></div>
+    <div class="card"><h4>Limits</h4><p>At most 2 searches and 20 seconds per turn. Every film it finds is saved to the catalog, so the same question is answered locally next time.</p></div>
+    <div class="card"><h4>Why not read Reddit and Letterboxd directly</h4><p>Reddit's API now needs manual approval, and Letterboxd's API is closed. Quora, MUBI and Tubi have none. Search snippets still surface what those communities recommend, without scraping.</p></div>
+  </div>
+</section>
+
+<!-- 10 -->
+<section id="screens">
+  <h2><span class="n">10</span>The app</h2>
+  <p class="sub">Your notebook sketch, built once in Expo for both the browser and the phone.</p>
+  <figure>
+    <div class="fig-scroll">
+    <svg class="d" viewBox="0 0 1000 600" role="img" aria-label="Wireframe of the Discover screen: header with niche label and navigation, the assistant's question with quick-reply chips, a row of five film cards, an open glass panel for Tokyo Story with its reason, ratings and actions, and the chat box at the bottom.">
+      <rect class="box" x="10" y="10" width="980" height="580" rx="14"/>
+      <text class="brand" x="34" y="46">FlickFind</text>
+      <rect class="acc" x="150" y="26" width="128" height="26" rx="13"/>
+      <text x="214" y="44" text-anchor="middle">Explorer · 0.42</text>
+      <text x="640" y="44">Preferred</text>
+      <text x="726" y="44">Blocked</text>
+      <text x="806" y="44">Watchlist</text>
+      <circle class="btn" cx="948" cy="39" r="15"/>
+      <line class="e" x1="10" y1="66" x2="990" y2="66" style="stroke:var(--line)"/>
+
+      <rect class="zone" x="34" y="84" width="520" height="44" rx="10"/>
+      <text x="50" y="111">You said you're feeling low. What would help tonight?</text>
+      <rect class="chipd" x="34" y="140" width="116" height="30" rx="15"/><text x="92" y="160" text-anchor="middle">Laugh it off</text>
+      <rect class="chipd" x="160" y="140" width="140" height="30" rx="15"/><text x="230" y="160" text-anchor="middle">Have a good cry</text>
+      <rect class="chipd" x="310" y="140" width="104" height="30" rx="15"/><text x="362" y="160" text-anchor="middle">Stay in it</text>
+      <rect class="chipd" x="424" y="140" width="116" height="30" rx="15"/><text x="482" y="160" text-anchor="middle">Distract me</text>
+      <rect class="btna" x="802" y="140" width="160" height="30" rx="15"/><text class="on" x="882" y="160" text-anchor="middle">Find more</text>
+
+      <rect class="box" x="34" y="190" width="176" height="290" rx="10"/><rect class="poster" x="44" y="200" width="156" height="200" rx="6"/>
+      <text class="t" x="44" y="424">Past Lives</text><text class="s" x="44" y="444">2023 · Drama</text>
+      <rect class="box" x="222" y="190" width="176" height="290" rx="10"/><rect class="poster" x="232" y="200" width="156" height="200" rx="6"/>
+      <text class="t" x="232" y="424" style="font-size:13px">Manchester by the Sea</text><text class="s" x="232" y="444">2016 · Drama</text>
+      <rect class="box" x="410" y="190" width="176" height="290" rx="10"/><rect class="poster" x="420" y="200" width="156" height="200" rx="6"/>
+      <rect class="box" x="598" y="190" width="176" height="290" rx="10"/><rect class="poster" x="608" y="200" width="156" height="200" rx="6"/>
+      <rect class="box" x="786" y="190" width="176" height="290" rx="10"/><rect class="poster" x="796" y="200" width="156" height="200" rx="6"/>
+      <text class="t" x="796" y="424">Aftersun</text><text class="s" x="796" y="444">2022 · Drama</text>
+
+      <rect class="shadow" x="428" y="186" width="360" height="300" rx="14"/>
+      <rect class="glass" x="420" y="178" width="360" height="300" rx="14"/>
+      <text class="t" x="440" y="208" style="font-size:16px">Tokyo Story (1953)</text>
+      <text class="s" x="440" y="228">Drama · Japanese · from your chat about feeling low</text>
+      <text class="t" x="440" y="260">Why it fits</text>
+      <text x="440" y="280">A gentle, slow film about parents and grown</text>
+      <text x="440" y="298">children drifting apart. It lets you sit with</text>
+      <text x="440" y="316">sadness without sinking into it.</text>
+      <text class="s" x="440" y="348">Ratings: IMDb · Rotten Tomatoes · FlickFind</text>
+      <text class="s" x="440" y="368">Where to watch (India), from JustWatch via TMDB</text>
+      <rect class="btn" x="440" y="420" width="96" height="36" rx="8"/><text x="488" y="443" text-anchor="middle">Watched</text>
+      <rect class="btna" x="546" y="420" width="116" height="36" rx="8"/><text class="on" x="604" y="443" text-anchor="middle">+ Watchlist</text>
+      <rect class="btn" x="672" y="420" width="88" height="36" rx="8"/><text x="716" y="443" text-anchor="middle">Block</text>
+
+      <rect class="box" x="34" y="510" width="820" height="54" rx="12"/>
+      <text class="s" x="54" y="542" style="font-size:14px">Tell me how you feel, or what you want to watch…</text>
+      <rect class="btna" x="866" y="510" width="96" height="54" rx="12"/><text class="on" x="914" y="542" text-anchor="middle">Send</text>
+    </svg>
+    </div>
+    <figcaption>The Discover screen as in your sketch. Clicking a card opens the glass panel with the reason, three ratings and the actions. The question and its quick replies appear above the cards when the app needs more to go on.</figcaption>
+  </figure>
+  <div class="tbl"><table>
+    <thead><tr><th>Screen / sheet</th><th>What's on it</th></tr></thead>
+    <tbody>
+      <tr><td>Discover</td><td>Chat, question chips, cards grid, Find more, chat box (above)</td></tr>
+      <tr><td>Film panel (glass)</td><td>Poster, title, synopsis, why it fits, IMDb / RT / FlickFind ratings, cast and crew (director, cinematographer, composer, top actors), where to watch, Watched · + Watchlist · Block</td></tr>
+      <tr><td>Watched sheet: Normal</td><td>Stars (1–5) and optional comments</td></tr>
+      <tr><td>Watched sheet: Niche (n ≥ 0.5)</td><td>Stars, "how well did it match your mood?" (1–5), "what mindset should a viewer be in to watch this?"</td></tr>
+      <tr><td>Block sheet</td><td>Reason: already watched · language · actor (pick from cast) · theme mismatch · too mainstream · other (text)</td></tr>
+      <tr><td>Watchlist</td><td>Card grid; panel actions Watched · Remove · Reject (Reject opens the Block sheet)</td></tr>
+      <tr><td>Preferred</td><td>Favourite genres, genres to avoid, About me, avoided languages and actors</td></tr>
+      <tr><td>Blocked</td><td>Every blocked film with its reason, plus Unblock</td></tr>
+      <tr><td>Profile</td><td>Niche score and label, films watched, account, Credits (TMDB / JustWatch / IMDb / OMDb notices)</td></tr>
+      <tr><td>Sign in / Register</td><td>Username, email, password; the login token is kept in secure storage on the phone</td></tr>
+    </tbody>
+  </table></div>
+  <p>Components: <code>MovieCard</code>, <code>GlassPanel</code>, <code>WatchedSheet</code>, <code>BlockSheet</code>, <code>QuickReplies</code>, <code>ChatBox</code>. The glass effect uses <code>expo-blur</code>; posters use <code>expo-image</code> with caching.</p>
+</section>
+
+<!-- 11 -->
+<section id="data-model">
+  <h2><span class="n">11</span>Data model</h2>
+  <p class="sub">User data lives in SQLite: small tables, one job each. The catalog is a separate read-only file.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Table</th><th>Columns</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>users</code></td><td>id, username, email, password_hash, niche_score, niche_changed_on, created_at</td><td>niche_score starts at 0.25</td></tr>
+      <tr><td><code>preferences</code></td><td>user_id, about_me, fav_genres, avoid_genres</td><td>One row per user</td></tr>
+      <tr><td><code>avoids</code></td><td>user_id, kind (language / person / genre), value, created_at</td><td>Hard filters from blocks or the Preferred page</td></tr>
+      <tr><td><code>taste</code></td><td>user_id, liked_vec, disliked_vec, liked_n, disliked_n, updated_at</td><td>Recomputed when ratings or blocks change</td></tr>
+      <tr><td><code>watchlist</code></td><td>user_id, movie_id, added_at</td><td>Unique per (user, movie)</td></tr>
+      <tr><td><code>watched</code></td><td>user_id, movie_id, stars, comment, mood_match, mindset, watched_at</td><td>The last two only for niche users</td></tr>
+      <tr><td><code>blocks</code></td><td>user_id, movie_id, reason, detail, created_at</td><td>Unique per (user, movie); deleted on unblock</td></tr>
+      <tr><td><code>impressions</code></td><td>user_id, chat_id, movie_id, shown_at</td><td>Drives "never repeat" and the fading penalty</td></tr>
+      <tr><td><code>chats</code></td><td>id, user_id, messages, intent, asks_in_row, created_at</td><td>The saved intent powers Find more</td></tr>
+      <tr><td><code>mood_notes</code></td><td>movie_id, user_id, mindset, created_at</td><td>Folded into mood documents at the monthly rebuild</td></tr>
+      <tr><td><code>rt_cache</code></td><td>imdb_id, rt_score, fetched_at</td><td>30-day OMDb cache</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- 12 -->
+<section id="api">
+  <h2><span class="n">12</span>API</h2>
+  <p class="sub">Every route except sign-in needs a login token. The user is always taken from the token, never from the request body.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Route</th><th>Does</th></tr></thead>
+    <tbody>
+      <tr><td><code>POST /auth/register</code> · <code>POST /auth/login</code></td><td>Create an account · get a token</td></tr>
+      <tr><td><code>GET /me</code></td><td>Profile, niche score and label, counts</td></tr>
+      <tr><td><code>GET /me/preferences</code> · <code>PUT /me/preferences</code></td><td>Genres, About me, avoided languages and actors</td></tr>
+      <tr><td><code>POST /chats</code></td><td>Start a chat</td></tr>
+      <tr><td><code>POST /chats/{id}/messages</code></td><td>One chat turn: returns a question with chips, or 0–5 cards</td></tr>
+      <tr><td><code>POST /chats/{id}/more</code></td><td>Find more</td></tr>
+      <tr><td><code>GET /movies/{id}</code></td><td>Full film details, Rotten Tomatoes (lazy), where to watch</td></tr>
+      <tr><td><code>GET /me/watchlist</code> · <code>PUT /me/watchlist/{movie}</code> · <code>DELETE /me/watchlist/{movie}</code></td><td>Watchlist</td></tr>
+      <tr><td><code>POST /me/watched</code></td><td>Stars, comment, and the niche answers</td></tr>
+      <tr><td><code>GET /me/blocks</code> · <code>PUT /me/blocks/{movie}</code> · <code>DELETE /me/blocks/{movie}</code></td><td>Block with reason · unblock</td></tr>
+      <tr><td><code>GET /health</code></td><td>Catalog version, film count, AI provider status</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- 13 -->
+<section id="repo">
+  <h2><span class="n">13</span>Project layout</h2>
+  <p class="sub">Three top-level parts that match the three places code runs.</p>
+<pre><code>FlickFind/
+├── builder/            <span class="cm">offline dataset pipeline (your PC)</span>
+│   ├── imdb.py         <span class="cm">step 1: download + filter IMDb files (DuckDB)</span>
+│   ├── tmdb.py         <span class="cm">step 2: fetch + cache TMDB details</span>
+│   ├── curate.py       <span class="cm">step 3: scope rules, vote floors, count report</span>
+│   ├── mood.py         <span class="cm">step 4: mood profiles via Ollama (Gemini for the bake-off)</span>
+│   ├── embed.py        <span class="cm">step 5: mood documents → vectors</span>
+│   ├── pack.py         <span class="cm">steps 6–7: parquet + manifest → B2</span>
+│   ├── daily.py        <span class="cm">daily update + ratings refresh</span>
+│   └── vocab.py        <span class="cm">the fixed mood vocabulary</span>
+├── backend/
+│   ├── app.py          <span class="cm">FastAPI routes</span>
+│   ├── catalog.py      <span class="cm">load parquet, filter mask, vector search, hot reload</span>
+│   ├── chat.py         <span class="cm">one turn: understand → search → judge</span>
+│   ├── scoring.py      <span class="cm">score, spread (MMR), pick 0–5</span>
+│   ├── taste.py        <span class="cm">taste profiles, niche score, block effects</span>
+│   ├── llm.py          <span class="cm">Gemini → Groq fallback, JSON output, timeouts</span>
+│   ├── agent.py        <span class="cm">web fallback</span>
+│   ├── ratings.py      <span class="cm">OMDb lazy fetch + cache</span>
+│   ├── db.py           <span class="cm">SQLAlchemy tables (SQLite now, Postgres later)</span>
+│   └── auth.py         <span class="cm">password hashing + tokens</span>
+├── app/                <span class="cm">Expo app (web + phone)</span>
+│   ├── app/            <span class="cm">screens (Expo Router)</span>
+│   └── components/
+├── tests/              <span class="cm">unit tests + golden mood prompts</span>
+├── data/               <span class="cm">local raw data and builds (gitignored)</span>
+└── docs/               <span class="cm">this plan</span></code></pre>
+</section>
+
+<!-- 14 -->
+<section id="phases">
+  <h2><span class="n">14</span>Build plan</h2>
+  <p class="sub">Nine phases. Each ends with something you can see working.</p>
+  <figure>
+    <div class="fig-scroll">
+    <svg class="d" viewBox="0 0 1000 270" role="img" aria-label="Phase order: P0 setup, P1 dataset base, P2 mood and vectors, P3 search and chat, P4 profile and feedback, P6 app, then optional P8 hosting. P5 freshness follows P2. P7 web agent needs both P3 and P5.">
+      <defs><marker id="a5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker></defs>
+      <rect class="box" x="10" y="50" width="110" height="58" rx="8"/><text class="t" x="65" y="74" text-anchor="middle">P0</text><text class="s" x="65" y="94" text-anchor="middle">Setup</text>
+      <rect class="box" x="150" y="50" width="110" height="58" rx="8"/><text class="t" x="205" y="74" text-anchor="middle">P1</text><text class="s" x="205" y="94" text-anchor="middle">Dataset base</text>
+      <rect class="acc" x="290" y="50" width="110" height="58" rx="8"/><text class="t" x="345" y="74" text-anchor="middle">P2</text><text class="s" x="345" y="94" text-anchor="middle">Mood + vectors</text>
+      <rect class="acc" x="430" y="50" width="110" height="58" rx="8"/><text class="t" x="485" y="74" text-anchor="middle">P3</text><text class="s" x="485" y="94" text-anchor="middle">Search + chat</text>
+      <rect class="box" x="570" y="50" width="110" height="58" rx="8"/><text class="t" x="625" y="74" text-anchor="middle">P4</text><text class="s" x="625" y="94" text-anchor="middle">Profile + feedback</text>
+      <rect class="box" x="710" y="50" width="110" height="58" rx="8"/><text class="t" x="765" y="74" text-anchor="middle">P6</text><text class="s" x="765" y="94" text-anchor="middle">App (Expo)</text>
+      <rect class="box dash" x="850" y="50" width="110" height="58" rx="8"/><text class="t" x="905" y="74" text-anchor="middle">P8</text><text class="s" x="905" y="94" text-anchor="middle">Public hosting</text>
+      <rect class="box" x="360" y="190" width="110" height="58" rx="8"/><text class="t" x="415" y="214" text-anchor="middle">P5</text><text class="s" x="415" y="234" text-anchor="middle">Freshness</text>
+      <rect class="box" x="710" y="190" width="110" height="58" rx="8"/><text class="t" x="765" y="214" text-anchor="middle">P7</text><text class="s" x="765" y="234" text-anchor="middle">Web fallback</text>
+      <line class="e" x1="120" y1="79" x2="148" y2="79" marker-end="url(#a5)"/>
+      <line class="e" x1="260" y1="79" x2="288" y2="79" marker-end="url(#a5)"/>
+      <line class="e" x1="400" y1="79" x2="428" y2="79" marker-end="url(#a5)"/>
+      <line class="e" x1="540" y1="79" x2="568" y2="79" marker-end="url(#a5)"/>
+      <line class="e" x1="680" y1="79" x2="708" y2="79" marker-end="url(#a5)"/>
+      <line class="e dash" x1="820" y1="79" x2="848" y2="79" marker-end="url(#a5)"/>
+      <path class="e" d="M345,108 L345,219 L358,219" marker-end="url(#a5)"/>
+      <line class="e" x1="470" y1="219" x2="708" y2="219" marker-end="url(#a5)"/>
+      <path class="e" d="M485,108 L485,150 L765,150 L765,188" marker-end="url(#a5)"/>
+    </svg>
+    </div>
+    <figcaption>Each arrow means "must finish first". P5 can run alongside P3 and P4 once P2 is done. P6 can start on fake data as soon as P3 fixes the API's shape. P8 is optional.</figcaption>
+  </figure>
+
+  <article class="phase">
+    <header><span class="pid">P0</span><h3>Setup and clean slate</h3><span class="meta">needs: nothing</span></header>
+    <ol>
+      <li>Create the accounts and keys below, and put them in <code>.env</code>.</li>
+      <li>Install <code>ollama-cuda</code>, pull a 4B-class instruct model, and check it runs on the GPU within 6 GB.</li>
+      <li>Delete the old stack: pgvector Docker, PyTorch, the transformers patch, the seed scripts, and the Vite app. Git history keeps them.</li>
+      <li>Create the new layout (<a href="#repo">§13</a>), a <code>.env.example</code>, separate requirements for backend and builder, and pytest.</li>
+    </ol>
+    <div class="tbl"><table>
+      <thead><tr><th>Account / key</th><th>For</th><th>Where</th></tr></thead>
+      <tbody>
+        <tr><td>TMDB API key</td><td>Film data, posters, new releases</td><td><a href="https://www.themoviedb.org/settings/api">themoviedb.org → Settings → API</a></td></tr>
+        <tr><td>OMDb key</td><td>Rotten Tomatoes scores</td><td><a href="https://www.omdbapi.com/apikey.aspx">omdbapi.com</a> (free key by email)</td></tr>
+        <tr><td>Gemini API key</td><td>Chat AI, web search</td><td><a href="https://aistudio.google.com">aistudio.google.com</a></td></tr>
+        <tr><td>Groq API key</td><td>Backup chat AI</td><td><a href="https://console.groq.com">console.groq.com</a></td></tr>
+        <tr><td>Backblaze B2 bucket + app key</td><td>Catalog storage</td><td><a href="https://www.backblaze.com">backblaze.com</a></td></tr>
+        <tr><td>Tailscale</td><td>Phone ↔ PC</td><td><a href="https://tailscale.com">tailscale.com</a> (PC + phone apps)</td></tr>
+        <tr><td>Expo account</td><td>Phone builds</td><td><a href="https://expo.dev">expo.dev</a></td></tr>
+        <tr><td>Tavily (optional)</td><td>Backup web search</td><td><a href="https://tavily.com">tavily.com</a></td></tr>
+      </tbody>
+    </table></div>
+    <div class="done"><b>Done when</b> every key answers a test call, and Ollama replies from the GPU.</div>
+  </article>
+
+  <article class="phase">
+    <header><span class="pid">P1</span><h3>Dataset base (pipeline steps 1–3)</h3><span class="meta">needs: P0</span></header>
+    <ol>
+      <li><code>imdb.py</code>: download <code>title.basics</code> and <code>title.ratings</code>, then filter with DuckDB.</li>
+      <li><code>tmdb.py</code>: map to TMDB ids (reusing your old parquet's id pairs), then fetch details with the appended data. Cache every response, and allow resuming after a stop.</li>
+      <li><code>curate.py</code>: language scope, vote floors and quality rules; print the count report.</li>
+      <li>You pick the final vote floors from the report.</li>
+    </ol>
+    <div class="done"><b>Done when</b> the report shows counts per language group and per floor, and the floors are agreed.</div>
+  </article>
+
+  <article class="phase">
+    <header><span class="pid">P2</span><h3>Mood profiles and vectors (steps 4–7)</h3><span class="meta">needs: P1</span></header>
+    <ol>
+      <li><code>vocab.py</code>: finalise the ~60 tags and 7 effects.</li>
+      <li>Write the mood prompt, then run the 50-film bake-off (local model vs Gemini) and pick the model.</li>
+      <li>Full profile run on the RTX 3050 with checkpoints. Time it on the first 500 films, then estimate the rest.</li>
+      <li><code>embed.py</code>: mood documents → 256-dimension vectors.</li>
+      <li><code>pack.py</code>: write the parquet and manifest, and upload to B2.</li>
+    </ol>
+    <div class="done"><b>Done when</b> catalog v1 is in B2, the spot check passes, and a test search for "rainy-day melancholy" returns films that make sense.</div>
+  </article>
+
+  <article class="phase">
+    <header><span class="pid">P3</span><h3>Search and chat engine</h3><span class="meta">needs: P2</span></header>
+    <ol>
+      <li><code>catalog.py</code>: load the catalog, filter mask, exact search, manifest check.</li>
+      <li><code>scoring.py</code>: score, spread (MMR), the fit bar, 0–5 picks.</li>
+      <li><code>llm.py</code>: Gemini with JSON output, timeouts and retries, Groq fallback.</li>
+      <li><code>chat.py</code>: understand / ask, search, judge, impressions, saved intent, Find more steps 1, 2 and 4.</li>
+      <li>Blocking work runs off the event loop, so one slow AI call can't freeze the server.</li>
+      <li>Write the 30 golden prompts and an evaluation script.</li>
+    </ol>
+    <div class="done"><b>Done when</b> on the golden prompts, fewer than 1 pick in 10 is judged off-mood; three Find mores in a row never repeat a film; vague prompts get a question.</div>
+  </article>
+
+  <article class="phase">
+    <header><span class="pid">P4</span><h3>Accounts, profile and feedback</h3><span class="meta">needs: P3</span></header>
+    <ol>
+      <li><code>auth.py</code>: register, log in, tokens; every route reads the user from the token.</li>
+      <li>Preferences, watchlist, and watched (Normal or Niche form, depending on <code>n</code>).</li>
+      <li>Blocks with reasons, their effects, and unblocking.</li>
+      <li><code>taste.py</code>: liked and disliked profiles, niche drift with the daily cap, wired into scoring.</li>
+    </ol>
+    <div class="done"><b>Done when</b> there is a unit test for every row of the actions table in <a href="#learning">§07</a>, and a blocked film never returns across chats.</div>
+  </article>
+
+  <article class="phase">
+    <header><span class="pid">P5</span><h3>Freshness and ratings</h3><span class="meta">needs: P2 · can run alongside P3–P4</span></header>
+    <ol>
+      <li><code>daily.py</code> plus a systemd timer; the monthly rebuild timer.</li>
+      <li>The backend's hourly manifest check and hot reload.</li>
+      <li><code>ratings.py</code>: OMDb lazy fetch with a 30-day cache; FlickFind average rating; where to watch (India).</li>
+    </ol>
+    <div class="done"><b>Done when</b> a film released this week appears the next morning, and its card shows a Rotten Tomatoes score.</div>
+  </article>
+
+  <article class="phase">
+    <header><span class="pid">P6</span><h3>The app (Expo, web + phone)</h3><span class="meta">needs: P4 · can start on fake data after P3</span></header>
+    <ol>
+      <li>Expo Router project; screens: Discover, Watchlist, Preferred, Blocked, Profile, Sign in.</li>
+      <li>Components from <a href="#screens">§10</a>; glass panel; Watched and Block sheets.</li>
+      <li>Token in secure storage; API address set to your PC's Tailscale name.</li>
+      <li>Credits on the Profile screen.</li>
+      <li>Test on the web, in Expo Go on your phone, and as an Android APK.</li>
+    </ol>
+    <div class="done"><b>Done when</b> the full flow (chat, picks, watch, rate, block, unblock) works on your phone over Tailscale.</div>
+  </article>
+
+  <article class="phase">
+    <header><span class="pid">P7</span><h3>Web fallback</h3><span class="meta">needs: P3 + P5</span></header>
+    <ol>
+      <li><code>agent.py</code>: search (Gemini grounding, Tavily backup), extract titles, resolve on TMDB.</li>
+      <li>Run builder steps 4–5 for new films in-process; save them to the daily file; judge them as usual.</li>
+      <li>Add it as Find more step 3, and trigger it on <code>needs_fresh</code>.</li>
+    </ol>
+    <div class="done"><b>Done when</b> asking for a film newer than the last build returns a real, resolved card, and that film is in the catalog afterwards.</div>
+  </article>
+
+  <article class="phase opt">
+    <header><span class="pid">P8</span><h3>Public hosting (optional)</h3><span class="meta">needs: P6</span></header>
+    <ol>
+      <li>A Supabase project (Postgres + logins); switch the database URL.</li>
+      <li>A Hugging Face Space (free CPU, 16 GB RAM) that pulls the catalog from B2 at startup.</li>
+      <li>Secrets and allowed origins; export the Expo web build to a free static host.</li>
+    </ol>
+    <div class="done"><b>Done when</b> the app works with your PC switched off. Expect a slow first load after 48 h idle (HF) or 7 days idle (Supabase).</div>
+  </article>
+</section>
+
+<!-- 15 -->
+<section id="running">
+  <h2><span class="n">15</span>Running it day to day</h2>
+  <p class="sub">The commands you'll use once the project is built. The names are part of the plan; the scripts don't exist yet.</p>
+<pre><code><span class="cm"># build the catalog (first time, then monthly by timer)</span>
+python -m builder.run --all
+
+<span class="cm"># daily update (the systemd timer runs this at 04:00)</span>
+python -m builder.daily
+
+<span class="cm"># backend on your PC, reachable over Tailscale</span>
+uvicorn backend.app:app --host 0.0.0.0 --port 8000
+
+<span class="cm"># the app: press w for the web version, or scan the QR code with Expo Go</span>
+cd app &amp;&amp; EXPO_PUBLIC_API_URL=http://&lt;your-pc&gt;:8000 npx expo start</code></pre>
+  <div class="grid2">
+    <div class="card"><h4>Every day, automatically</h4><p>New releases and fresh ratings land in B2 overnight; the backend picks them up within the hour.</p></div>
+    <div class="card"><h4>When you change code</h4><p>Run pytest, then the golden prompts. Compare off-mood and repeat rates with the last run before you commit.</p></div>
+    <div class="card"><h4>On your phone</h4><p>Tailscale on, Expo Go open. Your PC must be on until P8.</p></div>
+  </div>
+</section>
+
+<!-- 16 -->
+<section id="testing">
+  <h2><span class="n">16</span>Testing and quality</h2>
+  <p class="sub">Code tests catch bugs. Golden prompts catch bad recommendations.</p>
+  <div class="grid2">
+    <div class="card"><h4>Unit tests</h4><p>Filter mask, scoring, MMR, the fit-bar rule, the id check, niche updates and caps, each block effect, Find more steps, token checks.</p></div>
+    <div class="card"><h4>Golden mood prompts (30)</h4><p>Vague prompts, sad prompts with each quick reply, language-specific prompts, niche prompts, "something new". Tracked: off-mood rate, repeat rate, and how often vague prompts get a question.</p></div>
+    <div class="card"><h4>Dataset checks</h4><p>The build report every run: counts per step, drops per rule, language and decade spread, a 100-row spot check, and the manifest compared with the embedder.</p></div>
+    <div class="card"><h4>Real-world signal</h4><p>Niche users' "how well did it match your mood?" answers, compared with the AI's fit scores, tell us whether the bar of 7 is right.</p></div>
+  </div>
+</section>
+
+<!-- 17 -->
+<section id="risks">
+  <h2><span class="n">17</span>Risks</h2>
+  <p class="sub">What could go wrong, and what the plan already does about it.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Risk</th><th>Effect</th><th>Plan</th></tr></thead>
+    <tbody>
+      <tr><td>Free-tier limits shrink</td><td>Chat slows or fails</td><td>Groq fallback; questions use 1 call; the builder uses only local AI; check each console in P0</td></tr>
+      <tr><td>Thin mood profiles for obscure films</td><td>Odd niche picks</td><td>A confidence label lowers their weight; reviews as extra input; user mood notes improve them monthly</td></tr>
+      <tr><td>6 GB of GPU memory is tight</td><td>Slow profile run</td><td>4B-class model, small batches, checkpoints; Gemini for leftovers</td></tr>
+      <tr><td>The embedding setup changes by accident</td><td>Search silently breaks</td><td>The manifest records model, prefix and size; the backend refuses a mismatch</td></tr>
+      <tr><td>Noisy AI fit scores</td><td>Good films dropped, or bad ones kept</td><td>A scoring guide with anchors; tune the bar with real mood-match answers</td></tr>
+      <tr><td>PC switched off</td><td>The phone can't connect</td><td>P8 public hosting</td></tr>
+      <tr><td>Data licences</td><td>Breaking terms of use</td><td>Non-commercial only; private bucket; monthly refresh (TMDB's 6-month rule); credits screen</td></tr>
+      <tr><td>Free-tier figures unverified</td><td>Surprises in limits</td><td>Several 2026 sources disagree; confirm in each provider's console during P0</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- 18 -->
+<section id="assumptions">
+  <h2><span class="n">18</span>Assumed decisions</h2>
+  <p class="sub">Where you hadn't answered yet, the plan uses these defaults. Change any of them before its phase starts.</p>
+  <div class="callout">
+    <h4>Defaults in this plan</h4>
+    <ul>
+      <li><strong>Languages:</strong> Korean, Iranian, Chinese / Taiwanese / Hong Kong, Turkish and Russian films are <strong>not</strong> included, following your list. Adding one later is a one-line change plus a rebuild.</li>
+      <li><strong>One Expo codebase</strong> for web and phone, replacing the Vite app.</li>
+      <li><strong>Phone access through Tailscale</strong> first; public hosting is optional (P8).</li>
+      <li><strong>Mood profiles from a 4B-class local model,</strong> chosen after the 50-film comparison with Gemini.</li>
+      <li><strong>Where-to-watch data for India.</strong></li>
+      <li><strong>Vote floors</strong> as in <a href="#dataset">§05</a> until the P1 count report.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- 19 -->
+<section id="credits">
+  <h2><span class="n">19</span>Licences and credits</h2>
+  <p class="sub">Shown on the app's Credits screen. All of these allow non-commercial use.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Source</th><th>What we must do</th></tr></thead>
+    <tbody>
+      <tr><td>TMDB</td><td>Show the TMDB logo and "This product uses the TMDB API but is not endorsed or certified by TMDB." Don't keep TMDB data longer than 6 months.</td></tr>
+      <tr><td>JustWatch (via TMDB)</td><td>Credit JustWatch wherever where-to-watch data appears</td></tr>
+      <tr><td>IMDb datasets</td><td>Personal, non-commercial use only; don't republish the data</td></tr>
+      <tr><td>OMDb</td><td>Credit OMDb; CC BY-NC 4.0</td></tr>
+      <tr><td>nomic-embed-text-v1.5</td><td>Apache-2.0</td></tr>
+      <tr><td>Local AI model</td><td>Check the chosen model's licence in P2</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+</main>
+</div>
+</body>
+</html>
