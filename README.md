@@ -38,6 +38,17 @@ uv run pytest                                  # backend and builder tests
 
 On a phone, run the app with `EXPO_PUBLIC_API_URL` set to the laptop's Tailscale address, e.g. `http://100.x.y.z:8000`.
 
+## Daily catalog update
+
+`scripts/daily.sh` adds new releases: fresh IMDb lists, TMDB details for new films, curation, mood profiles through Groq's free API (up to 300 a day), vectors and a new catalog file. The running API loads the new catalog on its next request. Run it by hand, or every morning at 06:00 with a systemd user timer:
+
+```bash
+cp scripts/flickfind-daily.service scripts/flickfind-daily.timer ~/.config/systemd/user/
+systemctl --user enable --now flickfind-daily.timer
+```
+
+The log is in `data/build/daily.log`.
+
 ## Credits
 
 This product uses the TMDB API but is not endorsed or certified by TMDB. Film ratings from IMDb's non-commercial datasets and OMDb; where-to-watch data from JustWatch via TMDB. Non-commercial project.

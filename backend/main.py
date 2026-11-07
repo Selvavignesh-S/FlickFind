@@ -6,7 +6,6 @@ Accounts, preferences, the film library (watchlist / watched / blocked) and a fi
 import datetime
 import json
 import os
-from functools import cache
 from typing import Literal
 
 import bcrypt
@@ -18,6 +17,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from backend import db, fitcheck, omdb
 from backend.catalog import NEUTRAL, POSTER, Catalog
+from builder.common import BUILD
 from backend.understand import prepare
 
 NICHE_QUESTIONS_AT = 0.6  # niche users get the extra "watched" questions
@@ -26,9 +26,16 @@ app = FastAPI(title="FlickFind")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
-@cache
+CATALOG_DIR = BUILD / "catalog"
+_loaded = {}  # the catalog in memory and the manifest timestamp it came from
+
+
 def get_catalog():
-    return Catalog.load()
+    """The catalog in memory; reloaded (a few seconds, once) when a new one is packed, e.g. by scripts/daily.sh."""
+    stamp = (CATALOG_DIR / "manifest.json").stat().st_mtime
+    if _loaded.get("stamp") != stamp:
+        _loaded.update(catalog=Catalog.load(CATALOG_DIR), stamp=stamp)
+    return _loaded["catalog"]
 
 
 def get_db():

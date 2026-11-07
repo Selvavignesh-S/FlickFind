@@ -95,7 +95,10 @@ def main():
         "vote_floors": {**curate.FLOORS, "documentary": curate.DOC_FLOOR},
         "groups": dict(Counter(r["group"] for r in rows)),
     }
-    (OUT / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    # written last and swapped in whole: the API reloads when the manifest changes, so it never sees a half-built one
+    tmp = OUT / "manifest.json.tmp"
+    tmp.write_text(json.dumps(manifest, indent=2))
+    tmp.replace(OUT / "manifest.json")
     print(json.dumps(manifest, indent=2))
     print(f"{path} {path.stat().st_size / 1e6:.0f} MB")
 

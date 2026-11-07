@@ -6,6 +6,7 @@
     uv run python -m builder.mood bakeoff             # 50 films, local model vs Gemini, side by side
     uv run python -m builder.mood kaggle-upload       # inputs + prompt -> private Kaggle dataset
     uv run python -m builder.mood kaggle-push [OFFSET LIMIT|all MODEL]  # start a GPU run on Kaggle
+    uv run python -m builder.mood groq [LIMIT]        # pending films via Groq (daily new releases)
     uv run python -m builder.mood kaggle-fetch [wait] [27b|27b-OFFSET] # status; when ended, download + import (wait: until it ends)
 
 Profiles live in data/cache/profiles.sqlite keyed by TMDB id, with a fingerprint of the input text:
@@ -168,6 +169,28 @@ def cmd_local(limit=None):
             print(f"{i:,}/{len(todo):,}  {i / (time.time() - start):.2f} films/s  failed {failed}", flush=True)
 
 
+def cmd_groq(limit="300"):
+    """Profile pending films through Groq's free API, most-voted first: the daily top-up for new releases.
+
+    Groq's qwen3.8-27b is the same 27B model as the Kaggle runs; it sometimes returns incomplete JSON, so
+    GPT-OSS 120B is the fallback. The default limit keeps a daily run well inside the free ~1,000 requests a day.
+    """
+    votes = dict(duckdb.sql(f"SELECT tmdb_id, imdb_votes FROM '{BUILD / 'selected.parquet'}'").fetchall())
+    todo = sorted(pending(), key=lambda f: -votes.get(f[0], 0))[:int(limit)]
+    saved, failed = 0, 0
+    for tmdb_id, text, fp in todo:
+        for model in ("qwen/qwen3.8-27b", "openai/gpt-oss-120b"):
+            try:
+                save([(tmdb_id, fp, groq(text, model))], model)
+                saved += 1
+                break
+            except (ValueError, KeyError, TypeError, httpx.HTTPError) as e:
+                print(f"  {tmdb_id} {model}: {type(e).__name__} {str(e)[:80]}", file=sys.stderr)
+        else:
+            failed += 1
+    print(f"groq: {saved} profiled, {failed} failed (they stay pending), {len(todo)} attempted")
+
+
 def cmd_import(path):
     rows, bad, model = [], 0, "kaggle"
     for line in open(path):
@@ -303,4 +326,4 @@ if __name__ == "__main__":
     cmd, args = sys.argv[1], sys.argv[2:]
     {"inputs": cmd_inputs, "import": cmd_import, "bakeoff": lambda *a: cmd_bakeoff(*a), "kaggle-upload": cmd_kaggle_upload,
      "kaggle-push": cmd_kaggle_push, "kaggle-fetch": lambda *a: cmd_kaggle_fetch(wait="wait" in a, name=next((x for x in a if x != "wait"), "")),
-     "local": lambda *a: cmd_local(int(a[0]) if a else None)}[cmd](*args)
+     "local": lambda *a: cmd_local(int(a[0]) if a else None), "groq": cmd_groq}[cmd](*args)

@@ -1,0 +1,7 @@
+[Unit]
+Description=FlickFind daily catalog update
+
+[Service]
+Type=oneshot
+# Edit the path if the project lives elsewhere.
+ExecStart=%h/Documents/FlickFind/scripts/daily.sh

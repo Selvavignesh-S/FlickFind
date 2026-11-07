@@ -28,7 +28,7 @@ EXTRA = {  # tmdb_id: director, production countries, year, runtime, documentary
 }
 
 
-def fake_catalog():
+def fake_table():
     vecs = np.zeros((len(FILMS), DIMS), dtype=np.float16)
     for n in range(len(FILMS)):
         vecs[n, 0] = 1 - n * 0.1  # film 1 is the closest match to every query, then 2, 3, ...
@@ -44,8 +44,11 @@ def fake_catalog():
         "mood_tags": [["tense"]] * 6, "effect": ["tension"] * 6, "pace": ["medium"] * 6, "intensity": [3] * 6,
         "watch_when": ["you want a ride."] * 6, "obscurity": [f[5] for f in FILMS], "group": ["english"] * 6,
     }
-    table = pa.table(cols).append_column("vec", pa.FixedSizeListArray.from_arrays(pa.array(vecs.ravel()), DIMS))
-    return Catalog(table, "test")
+    return pa.table(cols).append_column("vec", pa.FixedSizeListArray.from_arrays(pa.array(vecs.ravel()), DIMS))
+
+
+def fake_catalog():
+    return Catalog(fake_table(), "test")
 
 
 @pytest.fixture(autouse=True)
@@ -396,3 +399,21 @@ def test_recommend_uses_the_users_activity(api, monkeypatch):
     ask("s2")
     assert seen["liked"] is not None and seen["disliked"] is not None and seen["liked_genres"] == ["Drama"]
     assert 1 in seen["seen_before"]  # shown in chat s1
+
+
+def test_api_reloads_a_newly_packed_catalog(tmp_path, monkeypatch):
+    import os
+
+    import pyarrow.parquet as pq
+
+    from builder.embed import MODEL
+    pq.write_table(fake_table(), tmp_path / "catalog-v1.parquet")
+    manifest = {"version": "v1", "file": "catalog-v1.parquet", "embedding": {"model": MODEL, "dims": DIMS}}
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+    monkeypatch.setattr(main, "CATALOG_DIR", tmp_path)
+    monkeypatch.setattr(main, "_loaded", {})
+    first = main.get_catalog()
+    assert main.get_catalog() is first and first.version == "v1"  # loaded once
+    (tmp_path / "manifest.json").write_text(json.dumps({**manifest, "version": "v2"}))
+    os.utime(tmp_path / "manifest.json", (1, 2_000_000_000))  # a new pack
+    assert main.get_catalog().version == "v2"
