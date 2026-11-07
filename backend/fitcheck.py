@@ -34,7 +34,7 @@ def describe(card):
             "watch this when": card["watch_when"]}
 
 
-def check(message, cards):
+def check(message, cards, about=""):
     """(the cards worth showing, best first, each with a "why"; whether the LLM check ran)."""
     order = {c["tmdb_id"]: n for n, c in enumerate(cards)}
 
@@ -43,7 +43,8 @@ def check(message, cards):
                 and str(r.get("why", "")).strip()]
         return rows or None
 
-    prompt = json.dumps({"request": message, "candidates": [describe(c) for c in cards]}, ensure_ascii=False)
+    prompt = json.dumps({"request": message, **({"about them (background only)": about} if about else {}),
+                         "candidates": [describe(c) for c in cards]}, ensure_ascii=False)
     rows = ask(prompt, SYSTEM, SCHEMA, valid) if cards else None
     if rows is None:  # no LLM: the search's own order, with the film's generic line
         for c in cards[:SHOW]:

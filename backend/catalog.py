@@ -19,6 +19,13 @@ SHORTLIST = 100      # only the best mood fits are considered at all
 QUALITY = 0.1        # rating vs films in the same language, weighted by votes (0.1 keeps sub-5.5 films out)
 LEAN = 0.06          # the user's learned lean: at taste 0 well-known films get +LEAN, at taste 1 lesser-known ones do
 NEUTRAL = 0.5        # where every new user's taste starts: no lean either way
+TASTE = 3.0          # closeness to the user's liked / disliked films, relative to the other shortlisted fits
+LIKED_LANGUAGE = 0.08  # x the share of the user's loved films in a film's language (all Japanese -> +0.08)
+LANGUAGE_SHORTLIST = 30  # ...and a language with at least this share of loved films adds its best fits to the shortlist
+LANGUAGE_SHORTLIST_SHARE = 0.3
+FULL_TASTE_AT = 5    # loved (or disliked) films before a taste counts in full; it builds up gradually until then
+LIKED_GENRE = 0.03   # a genre the user marked as a favourite
+SEEN_BEFORE = 0.08   # shown to this user in an earlier chat: fresh films of equal fit go first
 VARIETY = 0.25       # how hard the 5 picks are pushed apart (0 = pure ranking)
 POOL = 60            # candidates considered for the variety step
 CARD = ["tmdb_id", "imdb_id", "title", "original_title", "year", "runtime", "language", "genres", "overview",
@@ -124,6 +131,21 @@ class Catalog:
                 applied.append(("" if rules[field] else "not ") + field)
         return ok, applied, notes
 
+    def taste(self, weighted_ids):
+        """The direction of the films a user rated ({tmdb_id: weight}), scaled by how much evidence there is: one
+        rating counts 1/FULL_TASTE_AT, FULL_TASTE_AT or more count in full. None if none are in the catalog."""
+        rows = [(self.index[i], w) for i, w in weighted_ids.items() if i in self.index]
+        if not rows:
+            return None
+        v = (self.vecs[[n for n, _ in rows]] * np.array([[w] for _, w in rows])).sum(axis=0)
+        return (v / np.linalg.norm(v) * min(1, len(rows) / FULL_TASTE_AT)).astype(np.float32)
+
+    def language_shares(self, ids):
+        """{language: share of the films in ids}, scaled like taste(): a single loved film is a hint, not a lean."""
+        langs = [self.language[self.index[i]] for i in ids if i in self.index]
+        evidence = min(1, len(langs) / FULL_TASTE_AT)
+        return {lang: langs.count(lang) / len(langs) * evidence for lang in set(langs)} if langs else {}
+
     def same_title(self, n):
         """Every film with the same title as film n: originals and remakes that share it ("Drishyam" 2013 and 2015)."""
         return [int(self.ids[m]) for m in self.titles.get(words(self.table["title"][n].as_py()), [n])]
@@ -136,7 +158,8 @@ class Catalog:
         return max(found, key=lambda n: self.votes[n]) if found else None
 
     def search(self, query_vec, k=5, exclude=(), avoid_languages=(), avoid_actors=(), avoid_genres=(), effects=(),
-               niche=NEUTRAL, allowed=None):
+               niche=NEUTRAL, allowed=None, liked=None, disliked=None, liked_genres=(), seen_before=(),
+               liked_languages=None):
         """Top-k films. The SHORTLIST best mood fits (similarity + effect match) are reordered by quality and the
         user's learned lean, then spread apart so the picks aren't near-copies. Only `allowed` films (the request's
         hard rules) are considered; excluded ids and anything matching an avoid list never appear."""
@@ -156,10 +179,26 @@ class Catalog:
             fit = fit + EFFECT_BONUS * np.isin(self.effect, list(effects))
         fit = np.where(ok, fit, -np.inf)
         best = np.argsort(-fit)[:SHORTLIST]
+        for lang, share in (liked_languages or {}).items():  # a language the user loves: its best fits get a look too
+            if share >= LANGUAGE_SHORTLIST_SHARE:
+                in_lang = np.where(self.language == lang, fit, -np.inf)
+                best = np.union1d(best, np.argsort(-in_lang)[:LANGUAGE_SHORTLIST])
         best = best[np.isfinite(fit[best])]
         lean = LEAN * 2 * (NEUTRAL - niche)  # > 0 favours well-known films, < 0 lesser-known, 0 for a new user
         scores = np.full(len(fit), -np.inf)
         scores[best] = fit[best] + QUALITY * self.quality[best] + lean * self.popularity[best]
+        # the user's own taste, learned from their activity (nothing for a new user). Measured relative to the other
+        # shortlisted films, so it reorders good fits and never pulls in a film that doesn't fit the request.
+        for taste, sign in ((liked, 1), (disliked, -1)):
+            if taste is not None:
+                near = self.vecs[best] @ taste
+                scores[best] += sign * TASTE * (near - near.mean())
+        if liked_languages:  # {language: share of the user's loved films}
+            scores[best] += LIKED_LANGUAGE * np.array([liked_languages.get(self.language[i], 0) for i in best])
+        if liked_genres:
+            scores[best] += LIKED_GENRE * np.array([not set(liked_genres).isdisjoint(self.genres[i]) for i in best])
+        if len(seen_before):
+            scores[best] -= SEEN_BEFORE * np.isin(self.ids[best], list(seen_before))
         pool = list(best[np.argsort(-scores[best])][:POOL])
 
         picked = []  # maximal marginal relevance: each pick trades its score against similarity to earlier picks

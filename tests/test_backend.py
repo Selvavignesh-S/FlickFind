@@ -68,7 +68,7 @@ def api(tmp_path, monkeypatch):
     query[0] = 1
     plain = {"query_vec": query, "effects": [], "allowed": None, "exclude": [], "understood": [], "notes": [],
              "asked_genres": [], "clarify": None}
-    monkeypatch.setattr(main, "prepare", lambda catalog, text: dict(plain))
+    monkeypatch.setattr(main, "prepare", lambda catalog, text, about="": dict(plain))
     main.app.dependency_overrides[main.get_catalog] = fake_catalog
     client = TestClient(main.app)
     token = client.post("/auth/register", json={"email": "a@b.co", "password": "password1", "name": "A"}).json()["token"]
@@ -357,3 +357,42 @@ def test_fit_check_and_clarifying_question(api, monkeypatch):
 def test_fit_check_falls_back_without_llm(api):
     films = api.post("/recommend", json={"message": "x", "session": "s"}).json()["films"]  # LLMs blocked in tests
     assert len(films) == 5 and films[0]["why"] == "Watch this when you want a ride."
+
+
+def test_taste_reorders_equal_fits():
+    q = np.zeros(DIMS, dtype=np.float32)
+    q[0] = 1
+    ids = lambda hits: [i for i, _ in hits]  # noqa: E731
+    # three films that fit the request exactly as well, pointing different ways otherwise
+    c = small_catalog([[1, 0.3, 0], [1, 0, 0.3], [1, -0.3, 0]], ["lift"] * 3, [0.5] * 3, [7.0] * 3)
+    assert c.taste({}) is None and c.taste({999: 1.0}) is None  # nothing rated: no taste at all
+    assert ids(c.search(q, k=1, liked=c.taste({2: 1.0}))) == [2]  # close to a loved film: first
+    assert ids(c.search(q, k=1, disliked=c.taste({1: 1.0}))) == [3]  # the film furthest from a disliked one: first
+    c.genres = [[], ["Comedy"], []]
+    assert ids(c.search(q, k=1, liked_genres=["Comedy"])) == [2]
+    assert ids(c.search(q, k=1, seen_before=[1]))[0] != 1  # shown in an earlier chat: a fresh equal goes first
+
+    # taste builds up: one loved film is a fifth of a full taste, five or more count in full
+    assert np.linalg.norm(c.taste({2: 1.0})) == pytest.approx(0.2, abs=1e-3)
+    assert c.language_shares([1]) == {"en": pytest.approx(0.2)}
+
+
+def test_recommend_uses_the_users_activity(api, monkeypatch):
+    seen = {}
+    original = Catalog.search
+
+    def spy(self, *args, **kwargs):
+        seen.update(kwargs)
+        return original(self, *args, **kwargs)
+    monkeypatch.setattr(Catalog, "search", spy)
+    ask = lambda s: api.post("/recommend", json={"message": "x", "session": s})  # noqa: E731
+
+    ask("s1")  # a new user: no taste, nothing seen before
+    assert seen["liked"] is None and seen["disliked"] is None and seen["seen_before"] == []
+    api.put("/library/2", json={"status": "watched", "rating": 5})
+    api.put("/library/3", json={"status": "blocked", "block_reason": "theme"})
+    api.put("/library/4", json={"status": "watchlist"})  # says nothing about taste
+    api.put("/me/preferences", json={"genres_like": ["Drama"]})
+    ask("s2")
+    assert seen["liked"] is not None and seen["disliked"] is not None and seen["liked_genres"] == ["Drama"]
+    assert 1 in seen["seen_before"]  # shown in chat s1

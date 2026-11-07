@@ -173,20 +173,26 @@ def valid_rules(r):
     return out
 
 
-def understand(message):
+def with_about(message, about):
+    """The request, plus what the user wrote about themselves as background that never overrides it."""
+    return f"{message}\n\nAbout them (background only; the request above comes first): {about}" if about else message
+
+
+def understand(message, about=""):
     """The imagined ideal film for a message (cached), or None when no LLM could answer."""
-    if message not in _cache:
-        plan = ask(message, SYSTEM, SCHEMA, valid)
+    key = with_about(message, about)
+    if key not in _cache:
+        plan = ask(key, SYSTEM, SCHEMA, valid)
         if plan is None:
             return None
-        _cache[message] = plan
-    return _cache[message]
+        _cache[key] = plan
+    return _cache[key]
 
 
-def prepare(catalog, message):
+def prepare(catalog, message, about=""):
     """Everything catalog.search needs for a chat message, plus what the app shows about how it was read:
     {"query_vec", "effects", "allowed", "exclude", "understood" (list of words), "notes" (list of sentences)}."""
-    plan = understand(message)
+    plan = understand(message, about)
     if plan is None:  # shortcut: no LLM available; search with the raw words and keyword rules, no hard rules
         return {"query_vec": embed_query(message), "effects": effects_for(message), "allowed": None, "exclude": [],
                 "understood": [], "notes": ["The AI couldn't be reached, so this is a simple keyword search."],

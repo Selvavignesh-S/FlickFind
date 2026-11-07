@@ -254,14 +254,26 @@ def recommend(body: Ask, user=Depends(current_user), con=Depends(get_db), catalo
     """Up to 5 films for a message, never repeating within a session, or a clarifying question.
 
     LLM call 1 (backend.understand) reads the message: the imagined ideal film, hard rules, reference films, and a
-    question if it is too vague. The search proposes candidates; LLM call 2 (backend.fitcheck) keeps the ones that
-    truly fit and writes why. shortcut: taste from ratings (P4) isn't part of the ranking yet.
+    question if it is too vague. The search proposes candidates, reordered by the user's taste (liked / disliked
+    films, favourite genres, films shown in earlier chats); LLM call 2 (backend.fitcheck) keeps the ones that truly
+    fit and writes why. "About me" and favourite genres are background for both LLM calls.
     """
-    lib = con.execute("SELECT tmdb_id, block_reason, block_detail FROM library WHERE user_id = ?",
+    lib = con.execute("SELECT tmdb_id, status, rating, block_reason, block_detail FROM library WHERE user_id = ?",
                       (user["id"],)).fetchall()
     shown = [r[0] for r in con.execute("SELECT tmdb_id FROM shown WHERE user_id = ? AND session = ?",
                                        (user["id"], body.session))]
-    plan = prepare(catalog, body.message)
+    seen_before = [r[0] for r in con.execute(
+        "SELECT DISTINCT tmdb_id FROM shown WHERE user_id = ? AND session != ? AND shown_at >= datetime('now', '-30 days')",
+        (user["id"], body.session))]
+    # taste from activity: loved films pull, disliked ones and "not this kind of story" rejections push.
+    # The watchlist says nothing about taste (spec), so it is left out.
+    liked = {r["tmdb_id"]: {5: 1.0, 4: 0.6}[r["rating"]] for r in lib if r["status"] == "watched" and (r["rating"] or 0) >= 4}
+    disliked = {r["tmdb_id"]: {1: 1.0, 2: 0.6}[r["rating"]] for r in lib
+                if r["status"] == "watched" and r["rating"] in (1, 2)}
+    disliked |= {r["tmdb_id"]: 1.0 for r in lib if r["block_reason"] == "theme"}
+    liked_genres = json.loads(user["genres_like"])
+    about = "; ".join(filter(None, [user["about"], liked_genres and "favourite genres: " + ", ".join(liked_genres)]))
+    plan = prepare(catalog, body.message, about)
     if plan["clarify"] and body.clarify:
         return {"films": [], "understood": plan["understood"], "notes": plan["notes"], "more": False,
                 "question": plan["clarify"]["question"], "options": plan["clarify"]["options"]}
@@ -272,8 +284,10 @@ def recommend(body: Ask, user=Depends(current_user), con=Depends(get_db), catalo
         avoid_actors={r["block_detail"] for r in lib if r["block_reason"] == "actor"},
         # a genre the user avoids in Preferred still comes through when this request asks for it by name
         avoid_genres=set(json.loads(user["genres_avoid"])) - set(plan["asked_genres"]),
-        effects=plan["effects"], niche=user["niche"])
-    picks, checked = fitcheck.check(body.message, catalog.cards([i for i, _ in hits]))
+        effects=plan["effects"], niche=user["niche"],
+        liked=catalog.taste(liked), disliked=catalog.taste(disliked), liked_genres=liked_genres, seen_before=seen_before,
+        liked_languages=catalog.language_shares(liked))
+    picks, checked = fitcheck.check(body.message, catalog.cards([i for i, _ in hits]), about)
     # films the check turned down count as seen too, so "Find more" moves past them; without a check, only the shown
     seen = [i for i, _ in hits] if checked else [c["tmdb_id"] for c in picks]
     con.executemany("INSERT OR IGNORE INTO shown (user_id, session, tmdb_id) VALUES (?, ?, ?)",
