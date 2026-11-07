@@ -7,7 +7,9 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 
-DATA = ROOT / "data"
+# One dataset for every checkout: set FLICKFIND_DATA in .env to share it (e.g. with a branch's working folder),
+# instead of each checkout starting from an empty data/.
+DATA = Path(os.environ.get("FLICKFIND_DATA") or ROOT / "data").expanduser()
 RAW = DATA / "raw"      # downloaded source files (IMDb TSVs)
 CACHE = DATA / "cache"  # raw API responses, so rebuilds don't re-call APIs
 BUILD = DATA / "build"  # intermediate and final outputs
