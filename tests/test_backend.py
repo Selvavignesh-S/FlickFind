@@ -17,21 +17,44 @@ FILMS = [  # tmdb_id, title, language, cast, genres, obscurity
 ]
 
 
+EXTRA = {  # tmdb_id: director, production countries, year, runtime, documentary, animation, original title
+    1: ("Quentin Tarantino", ["US"], 1994, 154, False, False, "Alpha"),
+    2: ("Agnès Varda", ["FR"], 1962, 90, False, False, "Cléo de 5 à 7"),
+    3: ("Bong Joon-ho", ["KR"], 2019, 132, False, False, "Gamma"),
+    4: ("Hayao Miyazaki", ["JP"], 2001, 125, False, True, "Delta"),
+    5: ("Quentin Tarantino", ["US"], 2003, 111, False, False, "Epsilon"),
+    6: ("Anand Patwardhan", ["IN"], 1992, 85, True, False, "Zeta"),
+}
+
+
 def fake_catalog():
     vecs = np.zeros((len(FILMS), DIMS), dtype=np.float16)
     for n in range(len(FILMS)):
         vecs[n, 0] = 1 - n * 0.1  # film 1 is the closest match to every query, then 2, 3, ...
     cols = {
         "tmdb_id": [f[0] for f in FILMS], "imdb_id": [f"tt{f[0]}" for f in FILMS], "title": [f[1] for f in FILMS],
-        "original_title": [f[1] for f in FILMS], "year": [2000] * 6, "runtime": [100] * 6,
+        "original_title": [EXTRA[f[0]][6] for f in FILMS], "year": [EXTRA[f[0]][2] for f in FILMS],
+        "runtime": [EXTRA[f[0]][3] for f in FILMS], "countries": [EXTRA[f[0]][1] for f in FILMS],
+        "documentary": [EXTRA[f[0]][4] for f in FILMS], "animation": [EXTRA[f[0]][5] for f in FILMS],
         "language": [f[2] for f in FILMS], "genres": [f[4] for f in FILMS], "overview": ["A film."] * 6,
         "tagline": [None] * 6, "poster_path": ["/p.jpg"] * 6, "imdb_rating": [7.0] * 6, "imdb_votes": [1000] * 6,
-        "director": [["Dir"]] * 6, "cast": [f[3] for f in FILMS], "providers_in": [[]] * 6,
+        "director": [[EXTRA[f[0]][0]] for f in FILMS], "cast": [f[3] for f in FILMS], "providers_in": [[]] * 6,
         "mood_tags": [["tense"]] * 6, "effect": ["tension"] * 6, "pace": ["medium"] * 6, "intensity": [3] * 6,
         "watch_when": ["you want a ride."] * 6, "obscurity": [f[5] for f in FILMS], "group": ["english"] * 6,
     }
     table = pa.table(cols).append_column("vec", pa.FixedSizeListArray.from_arrays(pa.array(vecs.ravel()), DIMS))
     return Catalog(table, "test")
+
+
+@pytest.fixture(autouse=True)
+def no_llm_calls(monkeypatch):
+    """Tests never reach Gemini or Groq (network, quota); a test that needs an answer stubs it."""
+    from backend import understand
+
+    def blocked(message):
+        raise AssertionError("a test tried to call a real LLM")
+    monkeypatch.setattr(understand, "ask_gemini", blocked)
+    monkeypatch.setattr(understand, "ask_groq", blocked)
 
 
 @pytest.fixture
@@ -41,7 +64,9 @@ def api(tmp_path, monkeypatch):
     monkeypatch.setenv("JWT_SECRET", "test-secret-at-least-32-bytes-long!")
     query = np.zeros(DIMS, dtype=np.float32)
     query[0] = 1
-    monkeypatch.setattr(main, "query_for", lambda text: (query, []))
+    plain = {"query_vec": query, "effects": [], "allowed": None, "exclude": [], "understood": [], "notes": [],
+             "asked_genres": []}
+    monkeypatch.setattr(main, "prepare", lambda catalog, text: dict(plain))
     main.app.dependency_overrides[main.get_catalog] = fake_catalog
     client = TestClient(main.app)
     token = client.post("/auth/register", json={"email": "a@b.co", "password": "password1", "name": "A"}).json()["token"]
@@ -157,7 +182,9 @@ def small_catalog(vecs, effects, obscurity, ratings, groups=None):
     v = np.zeros((n, DIMS), dtype=np.float16)
     v[:, :len(vecs[0])] = vecs
     v /= np.linalg.norm(v.astype(np.float32), axis=1, keepdims=True)
-    cols = {"tmdb_id": list(range(1, n + 1)), "language": ["en"] * n, "cast": [[]] * n, "genres": [[]] * n,
+    cols = {"tmdb_id": list(range(1, n + 1)), "title": [f"F{i}" for i in range(n)], "original_title": [None] * n,
+            "language": ["en"] * n, "cast": [[]] * n, "genres": [[]] * n, "director": [[]] * n, "countries": [[]] * n,
+            "year": [2000] * n, "runtime": [100] * n, "documentary": [False] * n, "animation": [False] * n,
             "effect": effects, "obscurity": obscurity, "imdb_rating": ratings, "imdb_votes": [1000] * n,
             "group": groups or ["english"] * n}
     return Catalog(pa.table(cols).append_column("vec", pa.FixedSizeListArray.from_arrays(pa.array(v.ravel()), DIMS)), "t")
@@ -198,16 +225,22 @@ def test_ranking_effect_lean_quality_and_variety(monkeypatch):
     c = small_catalog([[1, 0.3, 0], [1, 0.31, 0], [1, 0, 0.32]], ["lift"] * 3, [0.5] * 3, [7.0] * 3)
     assert ids(c.search(q, k=2)) == [1, 3]
 
+    # a remake with the same title as an earlier pick is skipped
+    c = small_catalog([[1, 0.1], [1, 0.12], [1, 0.3]], ["lift"] * 3, [0.5] * 3, [7.0] * 3)
+    c.title_key = ["drishyam", "drishyam", "papanasam"]
+    assert ids(c.search(q, k=2)) == [1, 3]
+
 
 def test_query_rewrite_fallbacks_and_cache(monkeypatch):
     from backend import understand
     monkeypatch.setattr(understand, "_cache", {})
     texts = []
-    monkeypatch.setattr(understand, "embed_query", lambda t: texts.append(t) or "vec")
+    monkeypatch.setattr(understand, "embed_query", lambda t: texts.append(t) or np.ones(DIMS, dtype=np.float32))
     plan = {"effects": ["catharsis", "made-up"], "genres": ["Drama", "Nope"], "mood_tags": ["tender", "bittersweet", "x"],
             "pace": "glacial", "watch_when": "Watch this when you need to let it out.", "keywords": ["loss", "family"],
-            "synopsis": "A widower and his daughter learn to talk again."}
+            "synopsis": "A widower and his daughter learn to talk again.", "rules": {}, "like": []}
     calls = []
+    catalog = fake_catalog()
 
     def down(message):
         calls.append("gemini")
@@ -215,14 +248,71 @@ def test_query_rewrite_fallbacks_and_cache(monkeypatch):
     monkeypatch.setattr(understand, "ask_gemini", down)
     monkeypatch.setattr(understand, "ask_groq", lambda m: calls.append("groq") or dict(plan))
 
-    assert understand.query_for("I want a good cry") == ("vec", ["catharsis"])  # Gemini down: Groq answered
+    p = understand.prepare(catalog, "I want a good cry")  # Gemini down: Groq answered
+    assert p["effects"] == ["catharsis"] and p["allowed"].all() and p["notes"] == []
     assert texts[-1].startswith("Drama. Mood: tender, bittersweet. Effect: catharsis. Pace: medium. Watch this when you")
     assert "good cry" not in texts[-1]  # the search text is the imagined film, not the message
-    understand.query_for("I want a good cry")
+    understand.prepare(catalog, "I want a good cry")
     assert calls == ["gemini", "groq"]  # the second time came from the cache
 
     monkeypatch.setattr(understand, "ask_groq", down)
-    assert understand.query_for("make me laugh") == ("vec", ["lift"])  # both down: raw message + keyword rules
-    assert texts[-1] == "make me laugh"
+    p = understand.prepare(catalog, "make me laugh")  # both down: raw message + keyword rules, and the app is told
+    assert (p["effects"], p["allowed"], texts[-1]) == (["lift"], None, "make me laugh") and p["notes"]
     monkeypatch.setattr(understand, "ask_gemini", lambda m: dict(plan))
-    assert understand.query_for("make me laugh")[1] == ["catharsis"]  # a failure was not cached
+    assert understand.prepare(catalog, "make me laugh")["effects"] == ["catharsis"]  # a failure was not cached
+
+
+def test_rules_filter_the_catalog():
+    c = fake_catalog()
+    ids = lambda mask: [int(i) for i in c.ids[mask]]  # noqa: E731
+    assert ids(c.rules_mask({"directors": ["tarantino"]})[0]) == [1, 5]  # surname, any case
+    assert ids(c.rules_mask({"directors": ["Bong Joon Ho"]})[0]) == [3]  # hyphen or not
+    assert ids(c.rules_mask({"countries": ["IN"]})[0]) == [6]  # made in India (in English)
+    assert ids(c.rules_mask({"countries": ["IN"], "languages": ["hi", "ta"]})[0]) == []  # both must hold
+    assert ids(c.rules_mask({"languages": ["fr"]})[0]) == [2]
+    assert ids(c.rules_mask({"year_from": 1990, "year_to": 1999})[0]) == [1, 6]
+    assert ids(c.rules_mask({"max_runtime": 90})[0]) == [2, 6]
+    assert ids(c.rules_mask({"genres": ["Comedy"], "animation": True})[0]) == [4]
+    assert ids(c.rules_mask({"documentary": False, "directors": ["Anand Patwardhan"]})[0]) == []
+    ok, understood, notes = c.rules_mask({"directors": ["Quentin Tarantino", "Nobody Atall"]})
+    assert ids(ok) == [1, 5] and understood == ["directed by Quentin Tarantino"]
+    assert notes == ["No films directed by Nobody Atall are in the catalog yet."]
+    assert ids(c.rules_mask({})[0]) == [1, 2, 3, 4, 5, 6]  # no rules: everything
+
+
+def test_find_title():
+    c = fake_catalog()
+    assert c.find_title("cleo de 5 a 7") == 1  # original title, accents ignored (index 1 = film 2)
+    assert c.find_title("ALPHA") == 0
+    assert c.find_title("No Such Film") is None
+
+
+def test_references_and_rules_in_recommend(api, monkeypatch):
+    from backend import understand
+    monkeypatch.setattr(understand, "_cache", {})
+    monkeypatch.setattr(understand, "embed_query", lambda t: np.eye(1, DIMS, 0, dtype=np.float32)[0])
+    base = {"effects": ["tension"], "genres": ["Drama"], "mood_tags": ["tense", "bleak"], "pace": "medium",
+            "watch_when": "x", "keywords": ["a", "b", "c"], "synopsis": "y"}
+    answers = {
+        "tarantino films": {**base, "rules": {"directors": ["Quentin Tarantino"]}, "like": []},
+        "like alpha": {**base, "rules": {}, "like": [{"title": "Alpha"}, {"title": "Missing Film"}]},
+        "nolan films": {**base, "rules": {"directors": ["Christopher Nolan"]}, "like": []},
+        "a comedy please": {**base, "rules": {"genres": ["Comedy"]}, "like": []},
+    }
+    monkeypatch.setattr(understand, "ask_gemini", lambda m: dict(answers[m]))
+    monkeypatch.setattr(main, "prepare", understand.prepare)
+    ask = lambda m, s: api.post("/recommend", json={"message": m, "session": s}).json()  # noqa: E731
+
+    r = ask("tarantino films", "s1")
+    assert [f["tmdb_id"] for f in r["films"]] == [1, 5] and r["understood"] == ["directed by Quentin Tarantino"]
+    assert ask("tarantino films", "s1")["films"] == []  # Find more: all of his films were shown
+
+    r = ask("like alpha", "s2")
+    assert 1 not in [f["tmdb_id"] for f in r["films"]] and len(r["films"]) == 5  # the reference isn't recommended
+    assert r["understood"][0] == "like Alpha (1994)" and "Missing Film" in r["notes"][0]
+
+    r = ask("nolan films", "s3")
+    assert r["films"] == [] and r["notes"] == ["No films directed by Christopher Nolan are in the catalog yet."]
+
+    api.put("/me/preferences", json={"genres_avoid": ["Comedy"]})
+    assert [f["tmdb_id"] for f in ask("a comedy please", "s4")["films"]] == [1, 4, 6]  # asked by name: shown anyway

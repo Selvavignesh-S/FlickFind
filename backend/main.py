@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from backend import db, omdb
 from backend.catalog import NEUTRAL, POSTER, Catalog
-from backend.understand import query_for
+from backend.understand import prepare
 
 NICHE_QUESTIONS_AT = 0.6  # niche users get the extra "watched" questions
 app = FastAPI(title="FlickFind")
@@ -252,25 +252,27 @@ class Ask(BaseModel):
 def recommend(body: Ask, user=Depends(current_user), con=Depends(get_db), catalog=Depends(get_catalog)):
     """Up to 5 films for a message, never repeating within a session.
 
-    shortcut: one LLM call (the imagined ideal film) + vector search; P3 adds clarifying questions, taste profiles
-    from ratings and the second LLM call that checks the fit and writes the "why".
+    One LLM call reads the message: the imagined ideal film (mood), hard rules and reference films.
+    shortcut: P3 adds clarifying questions, taste profiles from ratings and the second LLM call that checks the fit
+    and writes the "why".
     """
     lib = con.execute("SELECT tmdb_id, block_reason, block_detail FROM library WHERE user_id = ?",
                       (user["id"],)).fetchall()
     shown = [r[0] for r in con.execute("SELECT tmdb_id FROM shown WHERE user_id = ? AND session = ?",
                                        (user["id"], body.session))]
-    query, effects = query_for(body.message)
+    plan = prepare(catalog, body.message)
     hits = catalog.search(
-        query, k=5,
-        exclude=[r["tmdb_id"] for r in lib] + shown,  # watchlist, watched and blocked films never come back
+        plan["query_vec"], k=5, allowed=plan["allowed"],  # the request's hard rules ("Indian", "by Tarantino")
+        exclude=[r["tmdb_id"] for r in lib] + shown + plan["exclude"],  # library films never come back
         avoid_languages={r["block_detail"] for r in lib if r["block_reason"] == "language"},
         avoid_actors={r["block_detail"] for r in lib if r["block_reason"] == "actor"},
-        avoid_genres=json.loads(user["genres_avoid"]),
-        effects=effects, niche=user["niche"])
+        # a genre the user avoids in Preferred still comes through when this request asks for it by name
+        avoid_genres=set(json.loads(user["genres_avoid"])) - set(plan["asked_genres"]),
+        effects=plan["effects"], niche=user["niche"])
     con.executemany("INSERT OR IGNORE INTO shown (user_id, session, tmdb_id) VALUES (?, ?, ?)",
                     [(user["id"], body.session, i) for i, _ in hits])
     cards = with_state(catalog.cards([i for i, _ in hits]), user["id"], con)
     for c, (_, score) in zip(cards, hits):
         c["score"], c["why"] = round(score, 3), c["watch_when"]
-    return {"films": cards}
+    return {"films": cards, "understood": plan["understood"], "notes": plan["notes"]}
 

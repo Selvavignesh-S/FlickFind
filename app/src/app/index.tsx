@@ -7,7 +7,12 @@ import { FilmGrid, MAX_WIDTH } from "../components/FilmGrid";
 import { Button, Chip, Field } from "../components/ui";
 import { colors, space } from "../theme";
 
-interface Turn { message: string; films: Film[]; busy: boolean; error?: string; done?: boolean }
+interface Turn {
+  message: string; films: Film[]; busy: boolean; error?: string; done?: boolean;
+  understood?: string[]; // the hard rules and reference films the request was read as, e.g. "Indian thrillers"
+  notes?: string[]; // e.g. a director who isn't in the catalog
+}
+interface Answer { films: Film[]; understood: string[]; notes: string[] }
 
 const EXAMPLES = ["I'm sad and want to laugh", "Something tense, not gory", "A cosy film for a rainy evening",
   "I want a good cry", "Mind-bending but not slow"];
@@ -27,9 +32,9 @@ export default function Discover() {
   const fetchFilms = async (i: number, message: string) => {
     update(i, { busy: true, error: undefined });
     try {
-      const { films } = await api<{ films: Film[] }>("/recommend", "POST", { message, session });
+      const { films, understood, notes } = await api<Answer>("/recommend", "POST", { message, session });
       setTurns((ts) => ts.map((t, n) => (n === i ? { ...t, busy: false, films: [...t.films, ...films],
-        done: films.length === 0 } : t)));
+        done: films.length === 0, understood, notes } : t)));
     } catch (e) {
       update(i, { busy: false, error: (e as Error).message });
     }
@@ -65,13 +70,21 @@ export default function Discover() {
         {turns.map((t, i) => (
           <View key={i} style={{ gap: space(1.5) }}>
             <Text style={s.you}>{t.message}</Text>
+            {t.understood && t.understood.length > 0 && (
+              <Text style={s.understood}>Searching: {t.understood.join(" · ")}</Text>
+            )}
+            {t.notes?.map((note) => <Text key={note} style={s.note}>{note}</Text>)}
             {t.films.length > 0 && (
               <FilmGrid films={t.films} onChange={(film) =>
                 update(i, { films: t.films.map((f) => (f.tmdb_id === film.tmdb_id ? film : f)) })} />
             )}
             {t.busy && <Text style={{ color: colors.muted }}>Finding films…</Text>}
             {t.error && <Text style={{ color: colors.danger }}>{t.error}</Text>}
-            {t.done && <Text style={{ color: colors.muted }}>That's everything that fits. Try describing it differently.</Text>}
+            {t.done && !(t.films.length === 0 && t.notes?.length) && (
+              <Text style={{ color: colors.muted }}>
+                {t.films.length ? "That's every film that fits this request." : "Nothing fits this request. Try describing it differently."}
+              </Text>
+            )}
             {!t.busy && !t.done && i === turns.length - 1 && t.films.length > 0 && (
               <View style={{ alignSelf: "flex-start" }}>
                 <Button label="Find more" onPress={() => fetchFilms(i, t.message)} />
@@ -94,6 +107,8 @@ export default function Discover() {
 const s = StyleSheet.create({
   page: { padding: space(2), gap: space(4), maxWidth: MAX_WIDTH, width: "100%", alignSelf: "center" },
   hello: { color: colors.text, fontSize: 28, fontWeight: "700" },
+  understood: { color: colors.muted, fontSize: 13, alignSelf: "flex-end" },
+  note: { color: colors.accent, fontSize: 14 },
   you: { color: colors.text, fontSize: 17, fontWeight: "600", alignSelf: "flex-end", backgroundColor: colors.glass,
     borderColor: colors.border, borderWidth: 1, borderRadius: 12, paddingVertical: 8, paddingHorizontal: 12, maxWidth: "85%" },
   inputBar: { borderTopWidth: 1, borderTopColor: colors.border, padding: space(1.5) },
