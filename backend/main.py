@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator
 
-from backend import db
+from backend import db, omdb
 from backend.catalog import POSTER, Catalog, embed_query
 
 NICHE_QUESTIONS_AT = 0.5  # niche users get the extra "watched" questions
@@ -144,10 +144,10 @@ def with_state(cards, user_id, con):
     stars = {r[0]: (r[1], r[2]) for r in con.execute(
         f"SELECT tmdb_id, AVG(rating), COUNT(rating) FROM library WHERE rating IS NOT NULL AND tmdb_id IN ({marks}) "
         "GROUP BY tmdb_id", ids)}
+    rt = omdb.scores([c.get("imdb_id") for c in cards], con)
     for c in cards:
         avg, n = stars.get(c["tmdb_id"], (None, 0))
-        # shortcut: Rotten Tomatoes needs an OMDb key (not set yet); fetched lazily per card once it is
-        c["ratings"] = {"imdb": c.get("imdb_rating"), "rotten_tomatoes": None,
+        c["ratings"] = {"imdb": c.get("imdb_rating"), "rotten_tomatoes": rt.get(c.get("imdb_id")),
                         "flickfind": round(avg, 1) if avg else None, "flickfind_votes": n}
         c["library"] = mine.get(c["tmdb_id"])
     return cards

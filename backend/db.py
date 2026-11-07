@@ -43,6 +43,11 @@ CREATE TABLE IF NOT EXISTS shown (
     shown_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id, session, tmdb_id)
 );
+CREATE TABLE IF NOT EXISTS omdb (               -- Rotten Tomatoes cache (backend/omdb.py)
+    imdb_id TEXT PRIMARY KEY,
+    rotten_tomatoes INTEGER,                    -- NULL: OMDb has no RT score for the film
+    fetched_at TEXT NOT NULL
+);
 """
 
 

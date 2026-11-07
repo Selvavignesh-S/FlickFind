@@ -3,7 +3,7 @@ import pyarrow as pa
 import pytest
 from fastapi.testclient import TestClient
 
-from backend import main
+from backend import main, omdb
 from backend.catalog import Catalog
 from builder.embed import DIMS
 
@@ -37,6 +37,7 @@ def fake_catalog():
 @pytest.fixture
 def api(tmp_path, monkeypatch):
     monkeypatch.setenv("FLICKFIND_DB", str(tmp_path / "test.db"))
+    monkeypatch.delenv("OMDB_API_KEY", raising=False)  # tests never call the real OMDb
     monkeypatch.setenv("JWT_SECRET", "test-secret-at-least-32-bytes-long!")
     query = np.zeros(DIMS, dtype=np.float32)
     query[0] = 1
@@ -113,3 +114,24 @@ def test_library_lists_and_ratings(api):
     assert watched[0]["ratings"]["flickfind"] == 4 and watched[0]["library"]["mindset"] == "quiet evening"
     assert api.get("/library", params={"status": "watchlist"}).json() == []
     assert api.get("/films/999").status_code == 404
+
+
+def test_rotten_tomatoes_cached_and_capped(api, monkeypatch):
+    calls = []
+    monkeypatch.setenv("OMDB_API_KEY", "fake")
+    monkeypatch.setattr(omdb, "fetch", lambda imdb_id, key: calls.append(imdb_id) or {"tt1": 91, "tt2": None}.get(imdb_id, 50))
+    assert api.get("/films/1").json()["ratings"]["rotten_tomatoes"] == 91
+    assert api.get("/films/2").json()["ratings"]["rotten_tomatoes"] is None  # OMDb has no RT score for it
+    api.get("/films/1")
+    assert calls == ["tt1", "tt2"]  # the second look at film 1 came from the cache
+
+    monkeypatch.setattr(omdb, "PER_REQUEST", 2)
+    films = recommend(api)  # 5 cards, 2 already cached, at most 2 fetched now
+    assert len(calls) == 4 and len(films) == 5
+
+    def broken(imdb_id, key):
+        raise RuntimeError("Request limit reached!")
+    monkeypatch.setattr(omdb, "fetch", broken)
+    monkeypatch.setattr(omdb, "_paused_on", None)
+    assert api.get("/films/6").json()["ratings"]["rotten_tomatoes"] is None  # a failure never breaks the card
+    assert omdb._paused_on is not None  # and pauses OMDb calls for the rest of the day
