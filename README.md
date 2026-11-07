@@ -18,7 +18,7 @@ A movie recommender you talk to. Describe your mood; it asks what you want from 
 Requires [uv](https://docs.astral.sh/uv/) and [Ollama](https://ollama.com) (with GPU support if you have one).
 
 ```bash
-uv sync --extra builder          # Python 3.12 env with all dependencies
+uv sync                         # Python 3.12 env with all dependencies
 cp .env.example .env             # then fill in the keys
 ollama pull qwen3:4b-instruct    # local model for mood profiles
 uv run scripts/check_setup.py    # every key and service should report ok

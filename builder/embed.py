@@ -16,8 +16,6 @@ import time
 import numpy as np
 
 from builder.common import CACHE
-from builder.mood import DB as PROFILES
-from builder.tmdb import cache as tmdb_cache
 
 MODEL = "nomic-ai/nomic-embed-text-v1.5"
 DIMS = 256  # Matryoshka truncation: ~1 benchmark point below the full 768, a third of the size
@@ -61,6 +59,8 @@ def db():
 
 
 def main():
+    from builder.mood import DB as PROFILES  # here, not at the top: the backend imports embed() without builder deps
+    from builder.tmdb import cache as tmdb_cache
     con = db()
     have = dict(con.execute("SELECT tmdb_id, fingerprint FROM vectors"))
     profiles = {i: json.loads(p) for i, p in sqlite3.connect(PROFILES).execute("SELECT tmdb_id, profile FROM profiles")}
