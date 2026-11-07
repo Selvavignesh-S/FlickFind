@@ -6,6 +6,7 @@ Accounts, preferences, the film library (watchlist / watched / blocked) and a fi
 import datetime
 import json
 import os
+import threading
 from typing import Literal
 
 import bcrypt
@@ -146,7 +147,7 @@ def genres(catalog=Depends(get_catalog)):
 
 # ---- films and the library ----
 
-def with_state(cards, user_id, con):
+def with_state(cards, user_id, con, fetch_rt=True):
     """Add the user's library state and the FlickFind rating (average of FlickFind users' stars) to cards."""
     if not cards:
         return cards
@@ -158,7 +159,7 @@ def with_state(cards, user_id, con):
     stars = {r[0]: (r[1], r[2]) for r in con.execute(
         f"SELECT tmdb_id, AVG(rating), COUNT(rating) FROM library WHERE rating IS NOT NULL AND tmdb_id IN ({marks}) "
         "GROUP BY tmdb_id", ids)}
-    rt = omdb.scores([c.get("imdb_id") for c in cards], con)
+    rt = omdb.scores([c.get("imdb_id") for c in cards], con, fetch=fetch_rt)
     for c in cards:
         avg, n = stars.get(c["tmdb_id"], (None, 0))
         c["ratings"] = {"imdb": c.get("imdb_rating"), "rotten_tomatoes": rt.get(c.get("imdb_id")),
@@ -250,6 +251,15 @@ def remove_from_library(tmdb_id: int, user=Depends(current_user), con=Depends(ge
 
 # ---- recommendations ----
 
+def prefetch_rt(imdb_ids):
+    con = db.connect()
+    try:
+        omdb.scores(imdb_ids, con)
+        con.commit()
+    finally:
+        con.close()
+
+
 class Ask(BaseModel):
     message: str = Field(min_length=1, max_length=1000)
     session: str = Field(min_length=1, max_length=64)  # one chat; "Find more" repeats the call with the same session
@@ -294,13 +304,19 @@ def recommend(body: Ask, user=Depends(current_user), con=Depends(get_db), catalo
         effects=plan["effects"], niche=user["niche"],
         liked=catalog.taste(liked), disliked=catalog.taste(disliked), liked_genres=liked_genres, seen_before=seen_before,
         liked_languages=catalog.language_shares(liked))
-    picks, checked = fitcheck.check(body.message, catalog.cards([i for i, _ in hits]), about)
+    candidates = catalog.cards([i for i, _ in hits])
+    # Rotten Tomatoes scores are fetched while the fit check runs (own connection: sqlite is per thread), so the
+    # cards come back ~1 s sooner; with_state below then reads them from the cache
+    rt = threading.Thread(target=prefetch_rt, args=([c.get("imdb_id") for c in candidates],), daemon=True)
+    rt.start()
+    picks, checked = fitcheck.check(body.message, candidates, about)
+    rt.join(timeout=5)
     # films the check turned down count as seen too, so "Find more" moves past them; without a check, only the shown
     seen = [i for i, _ in hits] if checked else [c["tmdb_id"] for c in picks]
     con.executemany("INSERT OR IGNORE INTO shown (user_id, session, tmdb_id) VALUES (?, ?, ?)",
                     [(user["id"], body.session, i) for i in seen])
     notes = plan["notes"] + ([] if picks or not hits else
                              ["None of the closest matches fit well enough. Find more looks further."])
-    return {"films": with_state(picks, user["id"], con), "understood": plan["understood"], "notes": notes,
+    return {"films": with_state(picks, user["id"], con, fetch_rt=False), "understood": plan["understood"], "notes": notes,
             "more": bool(hits), "question": None, "options": []}
 

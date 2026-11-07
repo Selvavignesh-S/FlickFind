@@ -42,8 +42,9 @@ def _try(imdb_id, key):
         return False, None
 
 
-def scores(imdb_ids, con):
-    """imdb_id -> Rotten Tomatoes % (or None) for the cached ones, fetching up to PER_REQUEST missing or stale ids."""
+def scores(imdb_ids, con, fetch=True):
+    """imdb_id -> Rotten Tomatoes % (or None) for the cached ones, fetching up to PER_REQUEST missing or stale ids
+    (none when fetch is False: the caller already fetched them)."""
     ids = [i for i in dict.fromkeys(imdb_ids) if i]
     if not ids:
         return {}
@@ -53,7 +54,7 @@ def scores(imdb_ids, con):
     out = {i: v[0] for i, v in cached.items()}
 
     key, today = os.environ.get("OMDB_API_KEY"), datetime.date.today()
-    if not key or _paused_on == today:
+    if not fetch or not key or _paused_on == today:
         return out
     stale = [i for i in ids if i not in cached or now - datetime.datetime.fromisoformat(cached[i][1]) > MAX_AGE]
     used = con.execute("SELECT COUNT(*) FROM omdb WHERE fetched_at >= ?", (today.isoformat(),)).fetchone()[0]
