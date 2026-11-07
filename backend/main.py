@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator
 
-from backend import db, omdb
+from backend import db, fitcheck, omdb
 from backend.catalog import NEUTRAL, POSTER, Catalog
 from backend.understand import prepare
 
@@ -246,33 +246,40 @@ def remove_from_library(tmdb_id: int, user=Depends(current_user), con=Depends(ge
 class Ask(BaseModel):
     message: str = Field(min_length=1, max_length=1000)
     session: str = Field(min_length=1, max_length=64)  # one chat; "Find more" repeats the call with the same session
+    clarify: bool = True  # False after "Just show me something": skip any clarifying question
 
 
 @app.post("/recommend")
 def recommend(body: Ask, user=Depends(current_user), con=Depends(get_db), catalog=Depends(get_catalog)):
-    """Up to 5 films for a message, never repeating within a session.
+    """Up to 5 films for a message, never repeating within a session, or a clarifying question.
 
-    One LLM call reads the message: the imagined ideal film (mood), hard rules and reference films.
-    shortcut: P3 adds clarifying questions, taste profiles from ratings and the second LLM call that checks the fit
-    and writes the "why".
+    LLM call 1 (backend.understand) reads the message: the imagined ideal film, hard rules, reference films, and a
+    question if it is too vague. The search proposes candidates; LLM call 2 (backend.fitcheck) keeps the ones that
+    truly fit and writes why. shortcut: taste from ratings (P4) isn't part of the ranking yet.
     """
     lib = con.execute("SELECT tmdb_id, block_reason, block_detail FROM library WHERE user_id = ?",
                       (user["id"],)).fetchall()
     shown = [r[0] for r in con.execute("SELECT tmdb_id FROM shown WHERE user_id = ? AND session = ?",
                                        (user["id"], body.session))]
     plan = prepare(catalog, body.message)
+    if plan["clarify"] and body.clarify:
+        return {"films": [], "understood": plan["understood"], "notes": plan["notes"], "more": False,
+                "question": plan["clarify"]["question"], "options": plan["clarify"]["options"]}
     hits = catalog.search(
-        plan["query_vec"], k=5, allowed=plan["allowed"],  # the request's hard rules ("Indian", "by Tarantino")
+        plan["query_vec"], k=fitcheck.CANDIDATES, allowed=plan["allowed"],  # the request's hard rules ("Indian", "by Tarantino")
         exclude=[r["tmdb_id"] for r in lib] + shown + plan["exclude"],  # library films never come back
         avoid_languages={r["block_detail"] for r in lib if r["block_reason"] == "language"},
         avoid_actors={r["block_detail"] for r in lib if r["block_reason"] == "actor"},
         # a genre the user avoids in Preferred still comes through when this request asks for it by name
         avoid_genres=set(json.loads(user["genres_avoid"])) - set(plan["asked_genres"]),
         effects=plan["effects"], niche=user["niche"])
+    picks, checked = fitcheck.check(body.message, catalog.cards([i for i, _ in hits]))
+    # films the check turned down count as seen too, so "Find more" moves past them; without a check, only the shown
+    seen = [i for i, _ in hits] if checked else [c["tmdb_id"] for c in picks]
     con.executemany("INSERT OR IGNORE INTO shown (user_id, session, tmdb_id) VALUES (?, ?, ?)",
-                    [(user["id"], body.session, i) for i, _ in hits])
-    cards = with_state(catalog.cards([i for i, _ in hits]), user["id"], con)
-    for c, (_, score) in zip(cards, hits):
-        c["score"], c["why"] = round(score, 3), c["watch_when"]
-    return {"films": cards, "understood": plan["understood"], "notes": plan["notes"]}
+                    [(user["id"], body.session, i) for i in seen])
+    notes = plan["notes"] + ([] if picks or not hits else
+                             ["None of the closest matches fit well enough. Find more looks further."])
+    return {"films": with_state(picks, user["id"], con), "understood": plan["understood"], "notes": notes,
+            "more": bool(hits), "question": None, "options": []}
 

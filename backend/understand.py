@@ -52,9 +52,11 @@ SCHEMA = {
         "like": {"type": "array", "items": {"type": "object", "properties": {
             "title": {"type": "string"}, "year": {"type": "integer"}}, "required": ["title"]}},
         "rules_summary": {"type": "string"},
+        "clarify": {"type": "object", "properties": {
+            "question": {"type": "string"}, "options": {"type": "array", "items": {"type": "string"}}}},
     },
     "required": ["effects", "genres", "mood_tags", "pace", "watch_when", "keywords", "synopsis", "rules", "like",
-                 "rules_summary"],
+                 "rules_summary", "clarify"],
 }
 LIKE_WEIGHT = 0.6  # "films like X": how much the search follows X's own vector vs the imagined film
 
@@ -88,7 +90,12 @@ otherwise leave it out (an empty rules object is normal for a mood-only request)
 like: films they name as a reference ("like Inception", "similar to Drishyam"), with the year if known. For these,
 still fill every other field to describe what they want.
 rules_summary: the rules in a few plain words for the person to see ("Indian thrillers", "directed by Quentin
-Tarantino", "Malayalam, 2010s"); empty when there are no rules."""
+Tarantino", "Malayalam, 2010s"); empty when there are no rules.
+clarify: ONLY when the request is too vague to tell what they want the film to do for them ("I'm sad", "something
+good", "a movie for tonight", "bored"), ask one short, warm question with 2 to 4 short answer options, e.g. "I'm sad"
+-> question "Do you want to lift your mood, have a good cry, or sit with the feeling?", options ["Lift my mood",
+"A good cry", "Sit with it"]. Leave question empty and options empty when the request already says what they want, or
+names rules or a reference film. Either way, fill every other field with your best guess."""
 
 _cache = {}  # message -> plan; only successes are kept, so a failed LLM call is retried next time
 _gemini = None
@@ -98,24 +105,37 @@ def dated(message):
     return f"Today is {datetime.date.today().isoformat()}. Request: {message}"  # so "recent" means something
 
 
-def ask_gemini(message):
+def ask_gemini(message, system=SYSTEM, schema=SCHEMA):
     global _gemini
     from google import genai
     from google.genai import types
     _gemini = _gemini or genai.Client(api_key=os.environ["GEMINI_API_KEY"])
     r = _gemini.models.generate_content(model=GEMINI_MODEL, contents=dated(message), config=types.GenerateContentConfig(
-        system_instruction=SYSTEM, temperature=0, response_mime_type="application/json", response_json_schema=SCHEMA))
+        system_instruction=system, temperature=0, response_mime_type="application/json", response_json_schema=schema))
     return json.loads(r.text)
 
 
-def ask_groq(message):
+def ask_groq(message, system=SYSTEM, schema=SCHEMA):
     r = httpx.post("https://api.groq.com/openai/v1/chat/completions", timeout=20,
                    headers={"Authorization": f"Bearer {os.environ['GROQ_API_KEY']}"},
                    json={"model": GROQ_MODEL, "temperature": 0, "reasoning_effort": "low",
-                         "response_format": {"type": "json_schema", "json_schema": {"name": "film", "schema": SCHEMA}},
-                         "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": dated(message)}]})
+                         "response_format": {"type": "json_schema", "json_schema": {"name": "answer", "schema": schema}},
+                         "messages": [{"role": "system", "content": system}, {"role": "user", "content": dated(message)}]})
     r.raise_for_status()
     return json.loads(r.json()["choices"][0]["message"]["content"])
+
+
+def ask(message, system, schema, check):
+    """Gemini, then Groq: the first answer that `check` accepts (check returns the cleaned answer or None)."""
+    for name, call in (("gemini", ask_gemini), ("groq", ask_groq)):
+        try:
+            answer = check(call(message, system, schema))
+        except Exception as e:  # rate limit, timeout, bad JSON: try the next one
+            print(f"llm: {name} failed: {type(e).__name__}: {str(e)[:120]}", flush=True)
+            continue
+        if answer:
+            return answer
+    return None
 
 
 def valid(plan):
@@ -127,6 +147,10 @@ def valid(plan):
         plan["pace"] = "medium"
     plan["rules"] = valid_rules(plan.get("rules") or {})
     plan["like"] = [x for x in plan.get("like") or [] if isinstance(x, dict) and str(x.get("title", "")).strip()][:3]
+    c = plan.get("clarify") or {}
+    options = [str(o).strip() for o in c.get("options") or [] if str(o).strip()][:4]
+    question = str(c.get("question") or "").strip()
+    plan["clarify"] = {"question": question, "options": options} if question and len(options) >= 2 else None
     ok = plan["effects"] and len(plan["mood_tags"]) >= 2 and str(plan.get("synopsis", "")).strip()
     return plan if ok else None
 
@@ -151,18 +175,12 @@ def valid_rules(r):
 
 def understand(message):
     """The imagined ideal film for a message (cached), or None when no LLM could answer."""
-    if message in _cache:
-        return _cache[message]
-    for name, ask in (("gemini", ask_gemini), ("groq", ask_groq)):
-        try:
-            plan = valid(ask(message))
-        except Exception as e:  # rate limit, timeout, bad JSON: try the next one
-            print(f"understand: {name} failed: {type(e).__name__}: {str(e)[:120]}", flush=True)
-            continue
-        if plan:
-            _cache[message] = plan
-            return plan
-    return None
+    if message not in _cache:
+        plan = ask(message, SYSTEM, SCHEMA, valid)
+        if plan is None:
+            return None
+        _cache[message] = plan
+    return _cache[message]
 
 
 def prepare(catalog, message):
@@ -172,7 +190,7 @@ def prepare(catalog, message):
     if plan is None:  # shortcut: no LLM available; search with the raw words and keyword rules, no hard rules
         return {"query_vec": embed_query(message), "effects": effects_for(message), "allowed": None, "exclude": [],
                 "understood": [], "notes": ["The AI couldn't be reached, so this is a simple keyword search."],
-                "asked_genres": []}
+                "asked_genres": [], "clarify": None}
     text = document(", ".join(plan["genres"]), plan["mood_tags"], plan["effects"][0], plan["pace"],
                     str(plan["watch_when"]).removeprefix("Watch this when ").strip(),
                     ", ".join(map(str, plan["keywords"])), plan["synopsis"])
@@ -198,4 +216,5 @@ def prepare(catalog, message):
     if not allowed.any() and not notes:
         notes.append("No film in the catalog meets all of those requirements.")
     return {"query_vec": query, "effects": plan["effects"], "allowed": allowed, "exclude": exclude,
-            "understood": understood, "notes": notes, "asked_genres": plan["rules"]["genres"]}
+            "understood": understood, "notes": notes, "asked_genres": plan["rules"]["genres"],
+            "clarify": plan["clarify"]}

@@ -38,7 +38,7 @@ export function FilmCard({ film, width, actions }: { film: Film; width: number; 
             : <Text style={[s.meta, { margin: space(1) }]}>{film.title}</Text>}
           {open && !film.missing && (
             <View style={s.panel}>
-              {film.why ? <Text style={s.why}>Watch this when {film.why}</Text> : null}
+              {film.watch_when ? <Text style={s.why}>Watch this when {film.watch_when}</Text> : null}
               <Text style={s.overview} numberOfLines={9}>{film.overview}</Text>
               {film.director?.length ? <Text style={s.meta}>Dir. {film.director.join(", ")}</Text> : null}
               {film.cast?.length ? <Text style={s.meta} numberOfLines={2}>{film.cast.slice(0, 3).join(", ")}</Text> : null}
@@ -50,6 +50,7 @@ export function FilmCard({ film, width, actions }: { film: Film; width: number; 
       <View style={s.body}>
         <Text style={s.title} numberOfLines={2}>{film.title}{film.year ? ` (${film.year})` : ""}</Text>
         <Ratings film={film} />
+        {film.why ? <Text style={s.reason} numberOfLines={3}>{film.why}</Text> : null}
         {film.mood_tags?.length ? <Text style={s.tags} numberOfLines={1}>{film.mood_tags.slice(0, 3).join(" · ")}</Text> : null}
         {status && (
           <Text style={[s.meta, { color: status === "blocked" ? colors.danger : colors.good }]}>
@@ -77,5 +78,6 @@ const s = StyleSheet.create({
   title: { color: colors.text, fontWeight: "700", fontSize: 15 },
   meta: { color: colors.muted, fontSize: 12 },
   tags: { color: colors.accent, fontSize: 12 },
+  reason: { color: colors.text, fontSize: 13, fontStyle: "italic", lineHeight: 18 },
   actions: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: space(1) },
 });

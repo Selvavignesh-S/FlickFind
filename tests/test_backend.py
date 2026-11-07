@@ -1,3 +1,4 @@
+import json
 import numpy as np
 import pyarrow as pa
 import pytest
@@ -52,7 +53,7 @@ def no_llm_calls(monkeypatch):
     """Tests never reach Gemini or Groq (network, quota); a test that needs an answer stubs it."""
     from backend import understand
 
-    def blocked(message):
+    def blocked(message, *args):
         raise AssertionError("a test tried to call a real LLM")
     monkeypatch.setattr(understand, "ask_gemini", blocked)
     monkeypatch.setattr(understand, "ask_groq", blocked)
@@ -66,7 +67,7 @@ def api(tmp_path, monkeypatch):
     query = np.zeros(DIMS, dtype=np.float32)
     query[0] = 1
     plain = {"query_vec": query, "effects": [], "allowed": None, "exclude": [], "understood": [], "notes": [],
-             "asked_genres": []}
+             "asked_genres": [], "clarify": None}
     monkeypatch.setattr(main, "prepare", lambda catalog, text: dict(plain))
     main.app.dependency_overrides[main.get_catalog] = fake_catalog
     client = TestClient(main.app)
@@ -243,11 +244,11 @@ def test_query_rewrite_fallbacks_and_cache(monkeypatch):
     calls = []
     catalog = fake_catalog()
 
-    def down(message):
+    def down(message, *args):
         calls.append("gemini")
         raise RuntimeError("429 quota")
     monkeypatch.setattr(understand, "ask_gemini", down)
-    monkeypatch.setattr(understand, "ask_groq", lambda m: calls.append("groq") or dict(plan))
+    monkeypatch.setattr(understand, "ask_groq", lambda m, *a: calls.append("groq") or dict(plan))
 
     p = understand.prepare(catalog, "I want a good cry")  # Gemini down: Groq answered
     assert p["effects"] == ["catharsis"] and p["allowed"].all() and p["notes"] == []
@@ -259,7 +260,7 @@ def test_query_rewrite_fallbacks_and_cache(monkeypatch):
     monkeypatch.setattr(understand, "ask_groq", down)
     p = understand.prepare(catalog, "make me laugh")  # both down: raw message + keyword rules, and the app is told
     assert (p["effects"], p["allowed"], texts[-1]) == (["lift"], None, "make me laugh") and p["notes"]
-    monkeypatch.setattr(understand, "ask_gemini", lambda m: dict(plan))
+    monkeypatch.setattr(understand, "ask_gemini", lambda m, *a: dict(plan))
     assert understand.prepare(catalog, "make me laugh")["effects"] == ["catharsis"]  # a failure was not cached
 
 
@@ -303,7 +304,7 @@ def test_references_and_rules_in_recommend(api, monkeypatch):
         "nolan films": {**base, "rules": {"directors": ["Christopher Nolan"]}, "like": []},
         "a comedy please": {**base, "rules": {"genres": ["Comedy"]}, "like": []},
     }
-    monkeypatch.setattr(understand, "ask_gemini", lambda m: dict(answers[m]))
+    monkeypatch.setattr(understand, "ask_gemini", lambda m, *a: dict(answers[m]))
     monkeypatch.setattr(main, "prepare", understand.prepare)
     ask = lambda m, s: api.post("/recommend", json={"message": m, "session": s}).json()  # noqa: E731
 
@@ -320,3 +321,39 @@ def test_references_and_rules_in_recommend(api, monkeypatch):
 
     api.put("/me/preferences", json={"genres_avoid": ["Comedy"]})
     assert [f["tmdb_id"] for f in ask("a comedy please", "s4")["films"]] == [1, 4, 6]  # asked by name: shown anyway
+
+
+def test_fit_check_and_clarifying_question(api, monkeypatch):
+    from backend import fitcheck, understand
+    monkeypatch.setattr(understand, "_cache", {})
+    monkeypatch.setattr(understand, "embed_query", lambda t: np.eye(1, DIMS, 0, dtype=np.float32)[0])
+    base = {"effects": ["lift"], "genres": ["Comedy"], "mood_tags": ["funny", "joyful"], "pace": "fast",
+            "watch_when": "x", "keywords": ["a", "b", "c"], "synopsis": "y", "rules": {}, "like": []}
+    plans = {"cheer me up": {**base, "clarify": {"question": "", "options": []}},
+             "i'm sad": {**base, "clarify": {"question": "Lift your mood or have a good cry?",
+                                             "options": ["Lift my mood", "A good cry"]}}}
+    fits = {1: 9, 2: 4, 3: 8, 4: 6, 5: 10, 6: 7}  # film 2 and 4 don't fit; 6 is more than 2 below the best (10)
+
+    def llm(message, system=understand.SYSTEM, schema=None):  # stands in for Gemini: the message arrives undated
+        if system == fitcheck.SYSTEM:
+            ids = [c["id"] for c in json.loads(message)["candidates"]]
+            return {"films": [{"id": i, "fit": fits[i], "why": f"Because {i}."} for i in ids]}
+        return dict(plans[message])
+    monkeypatch.setattr(understand, "ask_gemini", llm)
+    monkeypatch.setattr(main, "prepare", understand.prepare)
+    ask = lambda m, s, **kw: api.post("/recommend", json={"message": m, "session": s, **kw}).json()  # noqa: E731
+
+    r = ask("cheer me up", "s1")
+    assert [(f["tmdb_id"], f["why"]) for f in r["films"]] == [(5, "Because 5."), (1, "Because 1."), (3, "Because 3.")]
+    assert r["more"] and r["question"] is None
+    r = ask("cheer me up", "s1")  # every candidate was judged, so Find more has nothing left
+    assert r["films"] == [] and not r["more"]
+
+    r = ask("i'm sad", "s2")  # too vague: a question instead of films, and nothing counts as seen
+    assert r["films"] == [] and r["options"] == ["Lift my mood", "A good cry"]
+    assert len(ask("i'm sad", "s2", clarify=False)["films"]) == 3  # "just show me something"
+
+
+def test_fit_check_falls_back_without_llm(api):
+    films = api.post("/recommend", json={"message": "x", "session": "s"}).json()["films"]  # LLMs blocked in tests
+    assert len(films) == 5 and films[0]["why"] == "Watch this when you want a ride."
