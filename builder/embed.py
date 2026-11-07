@@ -33,8 +33,11 @@ def embed(texts, prefix):
         gpu = "CUDAExecutionProvider" in ort.get_available_providers()
         if gpu:
             ort.preload_dlls()  # the CUDA/cuDNN libraries come from pip wheels; load them explicitly
-        _model = TextEmbedding(MODEL, providers=["CUDAExecutionProvider"] if gpu else None)
-    full = np.array(list(_model.embed([f"{prefix}: {t}" for t in texts], batch_size=64)), dtype=np.float32)
+        # kSameAsRequested: the default memory pool keeps every padded batch size it has seen and overflowed a 6 GB
+        # RTX 3050 after ~30k films; this grows it only by what is asked for
+        cuda = [("CUDAExecutionProvider", {"arena_extend_strategy": "kSameAsRequested"})]
+        _model = TextEmbedding(MODEL, providers=cuda if gpu else None)
+    full = np.array(list(_model.embed([f"{prefix}: {t}" for t in texts], batch_size=32)), dtype=np.float32)
     # nomic's recipe for shorter vectors: layer-norm the full vector, truncate, re-normalise
     full = (full - full.mean(axis=1, keepdims=True)) / (full.std(axis=1, keepdims=True) + 1e-5)
     cut = full[:, :DIMS]
