@@ -39,6 +39,7 @@ SCHEMA = {
         "rules": {"type": "object", "properties": {  # each one only when the person states it
             "directors": {"type": "array", "items": {"type": "string"}},
             "actors": {"type": "array", "items": {"type": "string"}},
+            "studios": {"type": "array", "items": {"type": "string"}},
             "countries": {"type": "array", "items": {"type": "string"}},  # ISO 3166-1 alpha-2, e.g. "IN"
             "languages": {"type": "array", "items": {"type": "string"}},  # ISO 639-1, e.g. "ml"
             "genres": {"type": "array", "items": {"type": "string", "enum": GENRES}},
@@ -75,6 +76,8 @@ Respect what they rule out ("not gory", "nothing slow"): leave those qualities o
 rules: hard requirements every result must meet. Fill a field ONLY when the person states that requirement;
 otherwise leave it out (an empty rules object is normal for a mood-only request).
 - directors / actors: full names as film databases write them ("tarantino" -> "Quentin Tarantino").
+- studios: production companies they name, as film databases write them ("Ghibli" -> "Studio Ghibli", "A24",
+  "Pixar" -> "Pixar", "Marvel" -> "Marvel Studios").
 - A nationality or country ("Indian", "Korean films", "from France"): countries with its ISO code, no languages.
   A named language ("a Malayalam film", "in Japanese"): languages with its ISO 639-1 code, no countries.
 - genres: only genres they ask for by name; every result must have all of them.
@@ -132,7 +135,7 @@ def valid_rules(r):
     """Only well-formed rules survive: a malformed one is dropped rather than filtering out everything."""
     names = lambda v: [str(x).strip() for x in v or [] if str(x).strip()][:5]  # noqa: E731
     year = lambda v: v if isinstance(v, int) and 1880 <= v <= 2100 else None  # noqa: E731
-    out = {"directors": names(r.get("directors")), "actors": names(r.get("actors")),
+    out = {"directors": names(r.get("directors")), "actors": names(r.get("actors")), "studios": names(r.get("studios")),
            "countries": [c.upper() for c in r.get("countries") or [] if isinstance(c, str) and len(c) == 2],
            "languages": [c.lower() for c in r.get("languages") or [] if isinstance(c, str) and len(c) == 2],
            "genres": [g for g in r.get("genres") or [] if g in GENRES],

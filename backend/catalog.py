@@ -43,6 +43,9 @@ class Catalog:
         # for the hard rules in a request ("directed by Tarantino", "Indian", "from the 2010s") and "films like X"
         self.directors = People(table["director"].to_pylist())
         self.actors = People(self.cast)
+        # older catalog files have no companies column: studio rules then match nothing instead of crashing
+        self.studios = People(table["companies"].to_pylist() if "companies" in table.column_names
+                              else [[]] * table.num_rows)
         self.countries = table["countries"].to_pylist()
         self.year = np.array([y or 0 for y in table["year"].to_pylist()])
         self.runtime = np.array([r or 0 for r in table["runtime"].to_pylist()])
@@ -83,7 +86,8 @@ class Catalog:
         are separate requirements: "Malayalam" read as made in India + in Malayalam must not return Hindi films."""
         n = len(self.ids)
         ok, applied, notes = np.ones(n, dtype=bool), [], []
-        for field, people, label in (("directors", self.directors, "directed by"), ("actors", self.actors, "starring")):
+        for field, people, label in (("directors", self.directors, "directed by"), ("actors", self.actors, "starring"),
+                                     ("studios", self.studios, "from")):
             if not rules.get(field):
                 continue
             hit, found = np.zeros(n, dtype=bool), []

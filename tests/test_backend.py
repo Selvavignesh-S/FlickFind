@@ -36,6 +36,7 @@ def fake_catalog():
         "original_title": [EXTRA[f[0]][6] for f in FILMS], "year": [EXTRA[f[0]][2] for f in FILMS],
         "runtime": [EXTRA[f[0]][3] for f in FILMS], "countries": [EXTRA[f[0]][1] for f in FILMS],
         "documentary": [EXTRA[f[0]][4] for f in FILMS], "animation": [EXTRA[f[0]][5] for f in FILMS],
+        "companies": [["Studio Ghibli"] if f[0] == 4 else [] for f in FILMS],
         "language": [f[2] for f in FILMS], "genres": [f[4] for f in FILMS], "overview": ["A film."] * 6,
         "tagline": [None] * 6, "poster_path": ["/p.jpg"] * 6, "imdb_rating": [7.0] * 6, "imdb_votes": [1000] * 6,
         "director": [[EXTRA[f[0]][0]] for f in FILMS], "cast": [f[3] for f in FILMS], "providers_in": [[]] * 6,
@@ -277,6 +278,9 @@ def test_rules_filter_the_catalog():
     ok, understood, notes = c.rules_mask({"directors": ["Quentin Tarantino", "Nobody Atall"]})
     assert ids(ok) == [1, 5] and understood == ["directed by Quentin Tarantino"]
     assert notes == ["No films directed by Nobody Atall are in the catalog yet."]
+    assert ids(c.rules_mask({"studios": ["ghibli"]})[0]) == [4]
+    ok, _, notes = c.rules_mask({"studios": ["A24"]})
+    assert ids(ok) == [] and notes == ["No films from A24 are in the catalog yet."]
     assert ids(c.rules_mask({})[0]) == [1, 2, 3, 4, 5, 6]  # no rules: everything
 
 

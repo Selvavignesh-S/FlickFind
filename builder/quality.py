@@ -65,6 +65,8 @@ RULES = {
                                              and 1960 <= (r["year"] or 0) <= 1969,
     "A Korean revenge thriller": lambda r: "KR" in r["countries"] or r["language"] == "ko",
     "An animated film that isn't for kids": lambda r: r["animation"],
+    "A24 horror films": lambda r: "A24" in (r.get("companies") or []),
+    "Studio Ghibli films for a slow Sunday": lambda r: "Studio Ghibli" in (r.get("companies") or []),
 }
 # Requests naming a reference film: the reference itself must never be one of the picks.
 LIKE = {"Films like Inception": "Inception", "Something like Spirited Away but for adults": "Spirited Away",

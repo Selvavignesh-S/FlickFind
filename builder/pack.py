@@ -55,6 +55,7 @@ def main():
             "poster_path": d.get("poster_path"), "genres": [g["name"] for g in d.get("genres", [])],
             "keywords": [k["name"] for k in (d.get("keywords") or {}).get("keywords", [])][:20],
             "countries": [c["iso_3166_1"] for c in d.get("production_countries", [])],
+            "companies": [c["name"] for c in d.get("production_companies", [])][:8],  # studios: "A24", "Studio Ghibli"
             "tmdb_rating": d.get("vote_average"), "tmdb_votes": d.get("vote_count"), "popularity": d.get("popularity"),
             **credits(d), "providers_in": providers(d),
             **{k: p[k] for k in ("mood_tags", "effect", "pace", "intensity", "watch_when")},
