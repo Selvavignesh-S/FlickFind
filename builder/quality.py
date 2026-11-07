@@ -43,6 +43,12 @@ PROMPTS = [
     "Light and fun, nothing heavy",
     "A war film that shows the human cost",
     "Something hopeful after a breakup",
+    # the user's own requests from the first app test (2026-11-07), kept so every catalog is checked against them
+    "I wanna cry a lot and drain my sadness away",
+    "I want to forget my sadness, wanna laugh a lot",
+    "I want to watch a good techno thriller",
+    "I want to feel existential dread once I watch a film you recommend",
+    "I want to feel very little among the grand scheme of life",
 ]
 NICHE_SAMPLE = 6  # the first few prompts are also run as a niche user, to show the drift in action
 RECENT = 2  # "recent" = released in the last N years
