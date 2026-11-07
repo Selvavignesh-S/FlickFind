@@ -109,8 +109,8 @@ def ask_gemini(message, system=SYSTEM, schema=SCHEMA):
     global _gemini
     from google import genai
     from google.genai import types
-    # 8 s cap: when Gemini is overloaded, Groq answers sooner than a long wait would
-    _gemini = _gemini or genai.Client(api_key=os.environ["GEMINI_API_KEY"], http_options=types.HttpOptions(timeout=8000))
+    # 10 s cap (the minimum Gemini accepts): when it is overloaded, Groq answers sooner than a long wait would
+    _gemini = _gemini or genai.Client(api_key=os.environ["GEMINI_API_KEY"], http_options=types.HttpOptions(timeout=10_000))
     r = _gemini.models.generate_content(model=GEMINI_MODEL, contents=dated(message), config=types.GenerateContentConfig(
         system_instruction=system, temperature=0, response_mime_type="application/json", response_json_schema=schema))
     return json.loads(r.text)
