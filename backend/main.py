@@ -17,8 +17,8 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator
 
 from backend import db, omdb
-from backend.catalog import POSTER, Catalog, embed_query
-from backend.intent import effects_for
+from backend.catalog import POSTER, Catalog
+from backend.understand import query_for
 
 NICHE_QUESTIONS_AT = 0.5  # niche users get the extra "watched" questions
 app = FastAPI(title="FlickFind")
@@ -246,20 +246,21 @@ class Ask(BaseModel):
 def recommend(body: Ask, user=Depends(current_user), con=Depends(get_db), catalog=Depends(get_catalog)):
     """Up to 5 films for a message, never repeating within a session.
 
-    shortcut: keyword effect rules + vector search; P3 replaces this with the two-LLM-call turn (clarifying questions,
-    taste profiles from ratings, fit check) once the dataset has been tested.
+    shortcut: one LLM call (the imagined ideal film) + vector search; P3 adds clarifying questions, taste profiles
+    from ratings and the second LLM call that checks the fit and writes the "why".
     """
     lib = con.execute("SELECT tmdb_id, block_reason, block_detail FROM library WHERE user_id = ?",
                       (user["id"],)).fetchall()
     shown = [r[0] for r in con.execute("SELECT tmdb_id FROM shown WHERE user_id = ? AND session = ?",
                                        (user["id"], body.session))]
+    query, effects = query_for(body.message)
     hits = catalog.search(
-        embed_query(body.message), k=5,
+        query, k=5,
         exclude=[r["tmdb_id"] for r in lib] + shown,  # watchlist, watched and blocked films never come back
         avoid_languages={r["block_detail"] for r in lib if r["block_reason"] == "language"},
         avoid_actors={r["block_detail"] for r in lib if r["block_reason"] == "actor"},
         avoid_genres=json.loads(user["genres_avoid"]),
-        effects=effects_for(body.message), niche=user["niche"])
+        effects=effects, niche=user["niche"])
     con.executemany("INSERT OR IGNORE INTO shown (user_id, session, tmdb_id) VALUES (?, ?, ?)",
                     [(user["id"], body.session, i) for i, _ in hits])
     cards = with_state(catalog.cards([i for i, _ in hits]), user["id"], con)

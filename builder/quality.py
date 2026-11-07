@@ -8,8 +8,8 @@ import statistics
 from collections import Counter
 
 
-from backend.catalog import Catalog, embed_query
-from backend.intent import effects_for
+from backend.catalog import Catalog
+from backend.understand import query_for
 from builder.common import BUILD
 
 PROMPTS = [
@@ -49,8 +49,8 @@ RECENT = 2  # "recent" = released in the last N years
 
 
 def run(catalog, prompt, niche):
-    effects = effects_for(prompt)
-    hits = catalog.search(embed_query(prompt), k=5, effects=effects, niche=niche)
+    query, effects = query_for(prompt)  # the same LLM rewrite the app uses (cached, so the niche re-runs are free)
+    hits = catalog.search(query, k=5, effects=effects, niche=niche)
     rows = catalog.table.take([catalog.index[i] for i, _ in hits]).to_pylist()
     return effects, [(r, score) for r, (_, score) in zip(rows, hits)]
 

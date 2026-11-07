@@ -11,7 +11,7 @@ from builder.common import BUILD
 POSTER = "https://image.tmdb.org/t/p/w342"
 # Ranking weights, on the scale of mood similarity (top matches differ by ~0.05). Tune with builder/quality.py.
 EFFECT_BONUS = 0.06  # film has the effect the message asks for
-POPULARITY = 0.08    # well-known, well-rated films; scaled by (1 - niche), so it fades as a user drifts to niche
+POPULARITY = 0.2     # well-known, well-rated films; scaled by (1 - niche), so it fades as a user drifts to niche
 VARIETY = 0.25       # how hard the 5 picks are pushed apart (0 = pure ranking)
 POOL = 60            # candidates considered for the variety step
 CARD = ["tmdb_id", "imdb_id", "title", "original_title", "year", "runtime", "language", "genres", "overview",

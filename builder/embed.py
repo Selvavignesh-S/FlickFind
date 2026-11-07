@@ -45,13 +45,19 @@ def embed(texts, prefix):
 
 
 def mood_document(d, p):
-    """What gets embedded for a film: its mood profile first, then the facts."""
+    """What gets embedded for a film: its mood profile first, then the facts.
+
+    No title or year: a query like "a good cry" otherwise matches films *called* "Kiss and Cry" (seen on the full
+    catalog). backend.understand writes chat queries in this same layout, so the two land near each other.
+    """
     keywords = [k["name"] for k in (d.get("keywords") or {}).get("keywords", [])][:15]
-    return (f"{d['title']} ({(d.get('release_date') or '')[:4]}). "
-            f"{', '.join(g['name'] for g in d.get('genres', []))}. "
-            f"Mood: {', '.join(p['mood_tags'])}. Effect: {p['effect']}. Pace: {p['pace']}. "
-            f"Watch this when {p['watch_when']} "
-            f"Keywords: {', '.join(keywords)}. Synopsis: {d.get('overview') or ''}")
+    return document(", ".join(g["name"] for g in d.get("genres", [])), p["mood_tags"], p["effect"], p["pace"],
+                    p["watch_when"], ", ".join(keywords), d.get("overview") or "")
+
+
+def document(genres, mood_tags, effect, pace, watch_when, keywords, synopsis):
+    return (f"{genres}. Mood: {', '.join(mood_tags)}. Effect: {effect}. Pace: {pace}. "
+            f"Watch this when {watch_when} Keywords: {keywords}. Synopsis: {synopsis}")
 
 
 def db():

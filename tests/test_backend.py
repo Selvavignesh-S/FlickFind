@@ -41,7 +41,7 @@ def api(tmp_path, monkeypatch):
     monkeypatch.setenv("JWT_SECRET", "test-secret-at-least-32-bytes-long!")
     query = np.zeros(DIMS, dtype=np.float32)
     query[0] = 1
-    monkeypatch.setattr(main, "embed_query", lambda text: query)
+    monkeypatch.setattr(main, "query_for", lambda text: (query, []))
     main.app.dependency_overrides[main.get_catalog] = fake_catalog
     client = TestClient(main.app)
     token = client.post("/auth/register", json={"email": "a@b.co", "password": "password1", "name": "A"}).json()["token"]
@@ -177,3 +177,32 @@ def test_ranking_effect_popularity_and_variety():
     # without variety the picks are 1, 2; with it, 1, 3
     c = small_catalog([[1, 0.3, 0], [1, 0.31, 0], [1, 0, 0.32]], ["lift"] * 3, [0.5] * 3, [7.0] * 3)
     assert ids(c.search(q, k=2)) == [1, 3]
+
+
+def test_query_rewrite_fallbacks_and_cache(monkeypatch):
+    from backend import understand
+    monkeypatch.setattr(understand, "_cache", {})
+    texts = []
+    monkeypatch.setattr(understand, "embed_query", lambda t: texts.append(t) or "vec")
+    plan = {"effects": ["catharsis", "made-up"], "genres": ["Drama", "Nope"], "mood_tags": ["tender", "bittersweet", "x"],
+            "pace": "glacial", "watch_when": "Watch this when you need to let it out.", "keywords": ["loss", "family"],
+            "synopsis": "A widower and his daughter learn to talk again."}
+    calls = []
+
+    def down(message):
+        calls.append("gemini")
+        raise RuntimeError("429 quota")
+    monkeypatch.setattr(understand, "ask_gemini", down)
+    monkeypatch.setattr(understand, "ask_groq", lambda m: calls.append("groq") or dict(plan))
+
+    assert understand.query_for("I want a good cry") == ("vec", ["catharsis"])  # Gemini down: Groq answered
+    assert texts[-1].startswith("Drama. Mood: tender, bittersweet. Effect: catharsis. Pace: medium. Watch this when you")
+    assert "good cry" not in texts[-1]  # the search text is the imagined film, not the message
+    understand.query_for("I want a good cry")
+    assert calls == ["gemini", "groq"]  # the second time came from the cache
+
+    monkeypatch.setattr(understand, "ask_groq", down)
+    assert understand.query_for("make me laugh") == ("vec", ["lift"])  # both down: raw message + keyword rules
+    assert texts[-1] == "make me laugh"
+    monkeypatch.setattr(understand, "ask_gemini", lambda m: dict(plan))
+    assert understand.query_for("make me laugh")[1] == ["catharsis"]  # a failure was not cached
