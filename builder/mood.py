@@ -214,8 +214,14 @@ def kernel(name=""):
     return f"{os.environ['KAGGLE_USERNAME']}/flickfind-mood-profiles{suffix}", suffix
 
 
-def kaggle_cli(*args, check=True):
-    return subprocess.run(["kaggle", *args], check=check, capture_output=True, text=True)
+def kaggle_cli(*args, check=True, timeout=600):
+    """Run the kaggle CLI. The time limit matters: a status check once hung for six hours and stalled a whole merge."""
+    try:
+        return subprocess.run(["kaggle", *args], check=check, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        if check:
+            raise
+        return subprocess.CompletedProcess(args, -1, "", "timed out")
 
 
 def cmd_kaggle_upload():
@@ -265,7 +271,7 @@ def cmd_kaggle_fetch(wait=False, name=""):
     """
     kid, suffix = kernel(name)
     while True:
-        status = kaggle_cli("kernels", "status", kid, check=False).stdout.strip()
+        status = kaggle_cli("kernels", "status", kid, check=False, timeout=120).stdout.strip()
         ended = any(w in status.lower() for w in ("complete", "error", "cancel"))
         if ended or not wait:
             break
