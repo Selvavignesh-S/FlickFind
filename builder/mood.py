@@ -6,7 +6,8 @@
     uv run python -m builder.mood bakeoff             # 50 films, local model vs Gemini, side by side
     uv run python -m builder.mood kaggle-upload       # inputs + prompt -> private Kaggle dataset
     uv run python -m builder.mood kaggle-push [OFFSET LIMIT|all MODEL]  # start a GPU run on Kaggle
-    uv run python -m builder.mood groq [LIMIT]        # pending films via Groq (daily new releases)
+    uv run python -m builder.mood groq [LIMIT]        # daily via Groq: new releases, then 4B -> 27B upgrades
+    uv run python -m builder.mood upgrade-inputs N    # the next N films for a 27B Kaggle run (weekly)
     uv run python -m builder.mood kaggle-fetch [wait] [27b|27b-OFFSET] # status; when ended, download + import (wait: until it ends)
 
 Profiles live in data/cache/profiles.sqlite keyed by TMDB id, with a fingerprint of the input text:
@@ -99,6 +100,36 @@ def pending():
                 yield tmdb_id, text, fp
 
 
+def small_model(model):
+    """Profiles from a 4B model: good enough to start with, upgraded to 27B over time."""
+    return "4b" in model.lower()
+
+
+def work_order(films, models, votes, limit, upgrades=True):
+    """Which films to profile next, as (tmdb_id, text, fingerprint): films with no profile first, then (with
+    `upgrades`) films still on a small-model profile, each group most-voted first. A film whose text merely changed
+    (a refreshed review, a keyword edit) keeps its profile: re-profiling it would buy almost nothing."""
+    missing = [f for f in films if f[0] not in models]
+    small = [f for f in films if f[0] in models and small_model(models[f[0]])] if upgrades else []
+    by_votes = lambda fs: sorted(fs, key=lambda f: -votes.get(f[0], 0))  # noqa: E731
+    return (by_votes(missing) + by_votes(small))[:limit]
+
+
+def all_films():
+    """(tmdb_id, film text, fingerprint) for every selected film with TMDB details."""
+    selected = {r[0] for r in duckdb.sql(f"SELECT tmdb_id FROM '{BUILD / 'selected.parquet'}'").fetchall()}
+    for tmdb_id, body in tmdb_cache().execute("SELECT tmdb_id, body FROM details"):
+        if tmdb_id in selected:
+            text = film_text(json.loads(body))
+            yield tmdb_id, text, fingerprint(text)
+
+
+def next_up(limit, upgrades=True):
+    models = dict(db().execute("SELECT tmdb_id, model FROM profiles"))
+    votes = dict(duckdb.sql(f"SELECT tmdb_id, imdb_votes FROM '{BUILD / 'selected.parquet'}'").fetchall())
+    return work_order(list(all_films()), models, votes, limit, upgrades)
+
+
 def save(rows, model):
     con = db()
     now = int(time.time())
@@ -170,13 +201,13 @@ def cmd_local(limit=None):
 
 
 def cmd_groq(limit="300"):
-    """Profile pending films through Groq's free API, most-voted first: the daily top-up for new releases.
+    """The daily top-up through Groq's free API: new releases first, and any budget left upgrades the most-voted
+    films still on a 4B profile.
 
     Groq's qwen3.8-27b is the same 27B model as the Kaggle runs; it sometimes returns incomplete JSON, so
     GPT-OSS 120B is the fallback. The default limit keeps a daily run well inside the free ~1,000 requests a day.
     """
-    votes = dict(duckdb.sql(f"SELECT tmdb_id, imdb_votes FROM '{BUILD / 'selected.parquet'}'").fetchall())
-    todo = sorted(pending(), key=lambda f: -votes.get(f[0], 0))[:int(limit)]
+    todo = next_up(int(limit))
     saved, failed = 0, 0
     for tmdb_id, text, fp in todo:
         for model in ("qwen/qwen3.8-27b", "openai/gpt-oss-120b"):
@@ -189,6 +220,16 @@ def cmd_groq(limit="300"):
         else:
             failed += 1
     print(f"groq: {saved} profiled, {failed} failed (they stay pending), {len(todo)} attempted")
+
+
+def cmd_upgrade_inputs(limit):
+    """Write profile_inputs.jsonl for a 27B Kaggle run: films with no profile, then 4B profiles, most-voted first."""
+    n = 0
+    with open(INPUTS, "w") as f:
+        for tmdb_id, text, fp in next_up(int(limit)):
+            f.write(json.dumps({"tmdb_id": tmdb_id, "fingerprint": fp, "text": text}) + "\n")
+            n += 1
+    print(f"Wrote {n:,} films to {INPUTS}")
 
 
 def cmd_import(path):
@@ -332,4 +373,5 @@ if __name__ == "__main__":
     cmd, args = sys.argv[1], sys.argv[2:]
     {"inputs": cmd_inputs, "import": cmd_import, "bakeoff": lambda *a: cmd_bakeoff(*a), "kaggle-upload": cmd_kaggle_upload,
      "kaggle-push": cmd_kaggle_push, "kaggle-fetch": lambda *a: cmd_kaggle_fetch(wait="wait" in a, name=next((x for x in a if x != "wait"), "")),
-     "local": lambda *a: cmd_local(int(a[0]) if a else None), "groq": cmd_groq}[cmd](*args)
+     "local": lambda *a: cmd_local(int(a[0]) if a else None), "groq": cmd_groq,
+     "upgrade-inputs": cmd_upgrade_inputs}[cmd](*args)

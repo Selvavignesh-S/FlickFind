@@ -1,0 +1,9 @@
+[Unit]
+Description=Run the FlickFind 27B upgrade every Saturday, after Kaggle's free GPU hours reset
+
+[Timer]
+OnCalendar=Sat *-*-* 06:30
+Persistent=true
+
+[Install]
+WantedBy=timers.target

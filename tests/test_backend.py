@@ -505,3 +505,17 @@ def test_curation_reads_web_finds(tmp_path, monkeypatch):
     con.execute("INSERT INTO web_finds VALUES (1, 'tt1', 'A', 2024, 'x'), (2, NULL, 'B', 2024, 'x')")
     con.commit()
     assert curate.web_finds() == {"tt1"}
+
+
+def test_web_app_routes_fall_back_to_index(tmp_path):
+    from starlette.applications import Starlette
+
+    from backend.main import WebApp
+    (tmp_path / "index.html").write_text("<html>app</html>")
+    (tmp_path / "app.js").write_text("console.log(1)")
+    web = Starlette()
+    web.mount("/", WebApp(directory=tmp_path, html=True))
+    client = TestClient(web)
+    assert client.get("/").text == "<html>app</html>"
+    assert client.get("/watchlist").text == "<html>app</html>"  # an app page, not a file
+    assert client.get("/app.js").text == "console.log(1)"
