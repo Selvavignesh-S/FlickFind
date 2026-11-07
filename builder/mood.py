@@ -6,7 +6,7 @@
     uv run python -m builder.mood bakeoff             # 50 films, local model vs Gemini, side by side
     uv run python -m builder.mood kaggle-upload       # inputs + prompt -> private Kaggle dataset
     uv run python -m builder.mood kaggle-push [OFFSET LIMIT|all MODEL]  # start a GPU run on Kaggle
-    uv run python -m builder.mood kaggle-fetch [wait] [27b] # status; when ended, download + import (wait: until it ends)
+    uv run python -m builder.mood kaggle-fetch [wait] [27b|27b-OFFSET] # status; when ended, download + import (wait: until it ends)
 
 Profiles live in data/cache/profiles.sqlite keyed by TMDB id, with a fingerprint of the input text:
 a film is only re-profiled when its synopsis, keywords, reviews or this prompt change.
@@ -184,9 +184,11 @@ def cmd_import(path):
 KAGGLE = BUILD / "kaggle"
 
 
-def kernel(big):
-    """27B runs get their own notebook, so they can run alongside a 4B run (pushing to a running notebook cancels it)."""
-    return f"{os.environ['KAGGLE_USERNAME']}/flickfind-mood-profiles" + ("-27b" if big else ""), "-27b" if big else ""
+def kernel(name=""):
+    """Each 27B slice gets its own notebook ("27b", "27b-10500"), so runs can overlap: pushing to a running
+    notebook cancels it. name "" is the 4B notebook."""
+    suffix = f"-{name}" if name else ""
+    return f"{os.environ['KAGGLE_USERNAME']}/flickfind-mood-profiles{suffix}", suffix
 
 
 def kaggle_cli(*args, check=True):
@@ -215,7 +217,8 @@ def cmd_kaggle_upload():
 def cmd_kaggle_push(offset="0", limit=None, model=None):
     """Start a GPU run on Kaggle for films [offset, offset+limit) of the uploaded inputs (limit "all" = to the end)."""
     user = os.environ["KAGGLE_USERNAME"]
-    kid, suffix = kernel("27B" in (model or "27B"))
+    big = "27B" in (model or "27B")
+    kid, suffix = kernel(("27b" + (f"-{offset}" if int(offset) else "")) if big else "")
     k = KAGGLE / f"kernel{suffix}"
     k.mkdir(parents=True, exist_ok=True)
     script = (ROOT / "builder" / "kaggle_profile.py").read_text()
@@ -232,12 +235,12 @@ def cmd_kaggle_push(offset="0", limit=None, model=None):
     print(kaggle_cli("kernels", "push", "-p", str(k)).stdout)
 
 
-def cmd_kaggle_fetch(wait=False, big=False):
+def cmd_kaggle_fetch(wait=False, name=""):
     """Show the run's status; once it has ended, download its output and log, and import the profiles.
 
     wait: keep checking every minute until the run ends (used to chain runs unattended).
     """
-    kid, suffix = kernel(big)
+    kid, suffix = kernel(name)
     while True:
         status = kaggle_cli("kernels", "status", kid, check=False).stdout.strip()
         ended = any(w in status.lower() for w in ("complete", "error", "cancel"))
@@ -299,5 +302,5 @@ def cmd_bakeoff(*models, n=50, famous=False):
 if __name__ == "__main__":
     cmd, args = sys.argv[1], sys.argv[2:]
     {"inputs": cmd_inputs, "import": cmd_import, "bakeoff": lambda *a: cmd_bakeoff(*a), "kaggle-upload": cmd_kaggle_upload,
-     "kaggle-push": cmd_kaggle_push, "kaggle-fetch": lambda *a: cmd_kaggle_fetch(wait="wait" in a, big="27b" in a),
+     "kaggle-push": cmd_kaggle_push, "kaggle-fetch": lambda *a: cmd_kaggle_fetch(wait="wait" in a, name=next((x for x in a if x != "wait"), "")),
      "local": lambda *a: cmd_local(int(a[0]) if a else None)}[cmd](*args)
