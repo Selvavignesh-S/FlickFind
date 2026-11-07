@@ -135,3 +135,45 @@ def test_rotten_tomatoes_cached_and_capped(api, monkeypatch):
     monkeypatch.setattr(omdb, "_paused_on", None)
     assert api.get("/films/6").json()["ratings"]["rotten_tomatoes"] is None  # a failure never breaks the card
     assert omdb._paused_on is not None  # and pauses OMDb calls for the rest of the day
+
+
+def test_effects_for():
+    from backend.intent import effects_for
+    assert effects_for("I'm sad and want to laugh") == ["lift"]
+    assert effects_for("I want a good cry") == ["catharsis"]
+    assert effects_for("a cosy film for a rainy evening") == ["comfort"]
+    assert effects_for("something tense, then a laugh") == ["tension", "lift"]
+    assert effects_for("long week, I want to switch off") == ["escape"]
+    assert effects_for("I feel numb and don't want to be cheered up") == ["numb"]
+    assert effects_for("anything really") == []
+
+
+def small_catalog(vecs, effects, obscurity, ratings):
+    """A catalog of len(vecs) films whose vectors, effects, obscurity and IMDb ratings are given."""
+    n = len(vecs)
+    v = np.zeros((n, DIMS), dtype=np.float16)
+    v[:, :len(vecs[0])] = vecs
+    v /= np.linalg.norm(v.astype(np.float32), axis=1, keepdims=True)
+    cols = {"tmdb_id": list(range(1, n + 1)), "language": ["en"] * n, "cast": [[]] * n, "genres": [[]] * n,
+            "effect": effects, "obscurity": obscurity, "imdb_rating": ratings}
+    return Catalog(pa.table(cols).append_column("vec", pa.FixedSizeListArray.from_arrays(pa.array(v.ravel()), DIMS)), "t")
+
+
+def test_ranking_effect_popularity_and_variety():
+    q = np.zeros(DIMS, dtype=np.float32)
+    q[0] = 1
+    ids = lambda hits: [i for i, _ in hits]  # noqa: E731
+
+    # equal mood match: the film with the asked-for effect wins
+    c = small_catalog([[1, 0.1], [1, 0.1]], ["lift", "catharsis"], [0.5, 0.5], [7.0, 7.0])
+    assert ids(c.search(q, k=1, effects=["catharsis"])) == [2]
+
+    # a famous, well-rated film just behind an obscure one: Normal users get the famous one, Niche users the closer fit
+    c = small_catalog([[1, 0.15], [1, 0.25]], ["lift", "lift"], [0.95, 0.0], [6.0, 8.5])
+    assert ids(c.search(q, k=1, niche=0.25)) == [2]
+    assert ids(c.search(q, k=1, niche=1.0)) == [1]
+
+    # films 1 and 2 are near-copies off to one side of the query, film 3 is about as close on the other side:
+    # without variety the picks are 1, 2; with it, 1, 3
+    c = small_catalog([[1, 0.3, 0], [1, 0.31, 0], [1, 0, 0.32]], ["lift"] * 3, [0.5] * 3, [7.0] * 3)
+    assert ids(c.search(q, k=2)) == [1, 3]

@@ -9,6 +9,11 @@ from builder import embed
 from builder.common import BUILD
 
 POSTER = "https://image.tmdb.org/t/p/w342"
+# Ranking weights, on the scale of mood similarity (top matches differ by ~0.05). Tune with builder/quality.py.
+EFFECT_BONUS = 0.06  # film has the effect the message asks for
+POPULARITY = 0.08    # well-known, well-rated films; scaled by (1 - niche), so it fades as a user drifts to niche
+VARIETY = 0.25       # how hard the 5 picks are pushed apart (0 = pure ranking)
+POOL = 60            # candidates considered for the variety step
 CARD = ["tmdb_id", "imdb_id", "title", "original_title", "year", "runtime", "language", "genres", "overview",
         "tagline", "poster_path", "imdb_rating", "imdb_votes", "director", "cast", "providers_in", "mood_tags",
         "effect", "pace", "intensity", "watch_when", "obscurity"]
@@ -26,6 +31,10 @@ class Catalog:
         self.cast = table["cast"].to_pylist()
         self.genres = table["genres"].to_pylist()
         self.obscurity = table["obscurity"].to_numpy()
+        self.effect = np.array(table["effect"].to_pylist(), dtype=object)
+        rating = np.nan_to_num(table["imdb_rating"].to_numpy(zero_copy_only=False).astype(float), nan=5.0)
+        # 0..1: half how many people voted (vote rank), half how well they rated it (5 -> 0, 9+ -> 1)
+        self.prior = 0.5 * (1 - self.obscurity) + 0.5 * np.clip((rating - 5) / 4, 0, 1)
 
     @classmethod
     def load(cls, folder=BUILD / "catalog"):
@@ -48,8 +57,10 @@ class Catalog:
             r["poster"] = POSTER + r["poster_path"] if r["poster_path"] else None
         return rows
 
-    def search(self, query_vec, k=5, exclude=(), avoid_languages=(), avoid_actors=(), avoid_genres=()):
-        """Top-k films by mood similarity, skipping excluded ids and anything matching an avoid list."""
+    def search(self, query_vec, k=5, exclude=(), avoid_languages=(), avoid_actors=(), avoid_genres=(), effects=(),
+               niche=0.25):
+        """Top-k films: mood similarity + effect match + a popularity prior that fades with niche, then spread apart
+        so the picks aren't near-copies. Excluded ids and anything matching an avoid list never appear."""
         ok = np.ones(len(self.ids), dtype=bool)
         ok[[self.index[i] for i in exclude if i in self.index]] = False
         if avoid_languages:
@@ -61,10 +72,19 @@ class Catalog:
         if avoid_genres:
             genres = set(avoid_genres)
             ok &= np.array([genres.isdisjoint(g) for g in self.genres])
-        scores = np.where(ok, self.vecs @ query_vec, -np.inf)
-        top = np.argsort(-scores)[:k]
-        top = top[np.isfinite(scores[top])]
-        return [(int(self.ids[i]), float(scores[i])) for i in top]
+        scores = self.vecs @ query_vec + POPULARITY * (1 - niche) * self.prior
+        if effects:
+            scores = scores + EFFECT_BONUS * np.isin(self.effect, list(effects))
+        scores = np.where(ok, scores, -np.inf)
+        pool = np.argsort(-scores)[:POOL]
+        pool = list(pool[np.isfinite(scores[pool])])
+
+        picked = []  # maximal marginal relevance: each pick trades its score against similarity to earlier picks
+        while pool and len(picked) < k:
+            penalty = (self.vecs[pool] @ self.vecs[picked].T).max(axis=1) if picked else np.zeros(len(pool))
+            best = int(np.argmax(scores[pool] - VARIETY * penalty))
+            picked.append(pool.pop(best))
+        return [(int(self.ids[i]), float(scores[i])) for i in picked]
 
 
 def embed_query(text):

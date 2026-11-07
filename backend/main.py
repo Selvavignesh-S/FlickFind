@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from backend import db, omdb
 from backend.catalog import POSTER, Catalog, embed_query
+from backend.intent import effects_for
 
 NICHE_QUESTIONS_AT = 0.5  # niche users get the extra "watched" questions
 app = FastAPI(title="FlickFind")
@@ -245,8 +246,8 @@ class Ask(BaseModel):
 def recommend(body: Ask, user=Depends(current_user), con=Depends(get_db), catalog=Depends(get_catalog)):
     """Up to 5 films for a message, never repeating within a session.
 
-    shortcut: plain mood-vector search with the hard rules only; P3 replaces the ranking with the two-LLM-call turn
-    (clarifying questions, taste profiles, niche prior, fit check) once the dataset has been tested.
+    shortcut: keyword effect rules + vector search; P3 replaces this with the two-LLM-call turn (clarifying questions,
+    taste profiles from ratings, fit check) once the dataset has been tested.
     """
     lib = con.execute("SELECT tmdb_id, block_reason, block_detail FROM library WHERE user_id = ?",
                       (user["id"],)).fetchall()
@@ -257,7 +258,8 @@ def recommend(body: Ask, user=Depends(current_user), con=Depends(get_db), catalo
         exclude=[r["tmdb_id"] for r in lib] + shown,  # watchlist, watched and blocked films never come back
         avoid_languages={r["block_detail"] for r in lib if r["block_reason"] == "language"},
         avoid_actors={r["block_detail"] for r in lib if r["block_reason"] == "actor"},
-        avoid_genres=json.loads(user["genres_avoid"]))
+        avoid_genres=json.loads(user["genres_avoid"]),
+        effects=effects_for(body.message), niche=user["niche"])
     con.executemany("INSERT OR IGNORE INTO shown (user_id, session, tmdb_id) VALUES (?, ?, ?)",
                     [(user["id"], body.session, i) for i, _ in hits])
     cards = with_state(catalog.cards([i for i, _ in hits]), user["id"], con)
