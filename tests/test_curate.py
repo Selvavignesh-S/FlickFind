@@ -47,3 +47,17 @@ def test_every_language_has_a_group_except_missing():
     assert group_of("ja") == "japanese" and group_of("ta") == "indian"
     assert group_of("ko") == "world" and group_of("xx") == "world"  # xx = silent / no spoken language
     assert group_of(None) is None and group_of("") is None
+
+
+def test_tmdb_refresh_picks_the_oldest(tmp_path):
+    import sqlite3
+    import time
+
+    from builder.tmdb import stale
+    con = sqlite3.connect(tmp_path / "t.sqlite")
+    con.execute("CREATE TABLE details (tmdb_id INTEGER PRIMARY KEY, body TEXT, fetched_at INTEGER)")
+    now, day = int(time.time()), 86400
+    con.executemany("INSERT INTO details VALUES (?, '{}', ?)", [(1, now - 40 * day), (2, now - 90 * day),
+                                                              (3, now - 5 * day), (4, now - 31 * day)])
+    assert stale(con, 30, 10) == [2, 1, 4]  # older than 30 days, oldest first
+    assert stale(con, 30, 2) == [2, 1]

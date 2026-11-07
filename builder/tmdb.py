@@ -115,6 +115,33 @@ def details(limit=None):
     asyncio.run(fetch_all(todo, fetch, save))
 
 
+def stale(con, days, limit):
+    """The films whose details are oldest and more than `days` old, oldest first."""
+    cutoff = int(time.time()) - days * 86400
+    return [r[0] for r in con.execute(
+        "SELECT tmdb_id FROM details WHERE fetched_at < ? ORDER BY fetched_at LIMIT ?", (cutoff, limit))]
+
+
+def refresh(limit=5000, days=30):
+    """Re-fetch the oldest details: a rolling refresh of where-to-stream, posters and votes. At the daily default
+    every film is refreshed about once a month, well inside TMDB's six-month limit on cached data."""
+    con = cache()
+    todo = stale(con, days, limit or 5000)
+    print(f"refresh: {len(todo):,} films with details older than {days} days")
+
+    async def fetch(client, tmdb_id):
+        return await get(client, f"/movie/{tmdb_id}", {"append_to_response": APPEND})
+
+    def save(rows):
+        now = int(time.time())
+        con.executemany("UPDATE details SET body = ?, fetched_at = ? WHERE tmdb_id = ?",
+                        [(json.dumps(v), now, k) for k, v in rows if v is not None])
+        con.commit()
+
+    if todo:
+        asyncio.run(fetch_all(todo, fetch, save))
+
+
 if __name__ == "__main__":
     cmd, limit = sys.argv[1], int(sys.argv[2]) if len(sys.argv) > 2 else None
-    {"find": find, "details": details}[cmd](limit)
+    {"find": find, "details": details, "refresh": refresh}[cmd](limit)

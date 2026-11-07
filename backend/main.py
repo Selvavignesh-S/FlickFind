@@ -14,11 +14,13 @@ import jwt
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from backend import beyond, db, fitcheck, omdb
 from backend.catalog import NEUTRAL, POSTER, Catalog
-from builder.common import BUILD
+from builder.common import BUILD, ROOT
 from backend.understand import prepare, understand
 
 NICHE_QUESTIONS_AT = 0.6  # niche users get the extra "watched" questions
@@ -351,3 +353,23 @@ def search_beyond(body: Ask, user=Depends(current_user), con=Depends(get_db), ca
               "next daily update."] if fresh else []) + ([] if picks else ["Nothing beyond the catalog fits either."])
     return {"films": with_state(picks, user["id"], con), "understood": ["beyond the catalog"], "notes": notes,
             "more": False, "question": None, "options": []}
+
+
+# ---- the web app ----
+
+class WebApp(StaticFiles):
+    """The built Expo web app (scripts/build_web.sh). Paths that aren't files, like /watchlist, get index.html so the
+    app's own router can show the page."""
+
+    async def get_response(self, path, scope):
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as e:
+            if e.status_code != 404:
+                raise
+            return await super().get_response("index.html", scope)
+
+
+WEB_DIR = ROOT / "app" / "dist"
+if (WEB_DIR / "index.html").exists():  # mounted last, so every API route above still wins
+    app.mount("/", WebApp(directory=WEB_DIR, html=True), name="web")

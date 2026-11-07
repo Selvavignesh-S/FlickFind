@@ -1,0 +1,7 @@
+[Unit]
+Description=FlickFind weekly 27B upgrade on Kaggle
+
+[Service]
+Type=oneshot
+# Edit the path if the project lives elsewhere.
+ExecStart=%h/Documents/FlickFind/scripts/weekly_upgrade.sh

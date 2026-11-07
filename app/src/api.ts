@@ -1,7 +1,8 @@
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 
-// On a phone, set EXPO_PUBLIC_API_URL to the laptop's Tailscale address, e.g. http://100.x.y.z:8000
+// On a phone with Expo Go, set EXPO_PUBLIC_API_URL to the laptop's Tailscale address, e.g. http://100.x.y.z:8000.
+// The web build that the API itself serves (scripts/build_web.sh) is built with it empty: same address as the page.
 export const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export type Status = "watchlist" | "watched" | "blocked";

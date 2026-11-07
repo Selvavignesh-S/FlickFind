@@ -38,6 +38,18 @@ uv run pytest                                  # backend and builder tests
 
 On a phone, run the app with `EXPO_PUBLIC_API_URL` set to the laptop's Tailscale address, e.g. `http://100.x.y.z:8000`.
 
+## Always on
+
+`scripts/flickfind-api.service` runs the API, which also serves the web app (build it once with `scripts/build_web.sh`), on port 8000. Open it from any device on your Tailscale network at `http://<laptop's tailscale ip>:8000` and add it to the home screen. It starts with your login and restarts if it crashes:
+
+```bash
+scripts/build_web.sh
+cp scripts/flickfind-api.service ~/.config/systemd/user/
+systemctl --user enable --now flickfind-api.service
+```
+
+To keep it running after a reboot without logging in, run `loginctl enable-linger $USER` once.
+
 ## Daily catalog update
 
 `scripts/daily.sh` adds new releases: fresh IMDb lists, TMDB details for new films, curation, mood profiles through Groq's free API (up to 300 a day), vectors and a new catalog file. The running API loads the new catalog on its next request. Run it by hand, or every morning at 06:00 with a systemd user timer:
@@ -47,7 +59,18 @@ cp scripts/flickfind-daily.service scripts/flickfind-daily.timer ~/.config/syste
 systemctl --user enable --now flickfind-daily.timer
 ```
 
-The log is in `data/build/daily.log`.
+The log is in `data/build/daily.log`. Each day it also refreshes the TMDB details of the 5,000 films fetched longest ago (every film about once a month) and upgrades the most-voted 4B mood profiles to 27B with whatever Groq budget new releases leave.
+
+## Weekly 27B upgrade
+
+`scripts/weekly_upgrade.sh` re-profiles the most-voted films still on a 4B profile with Qwen 27B on Kaggle's free GPUs: one or two runs of 10,500 films, sized to the GPU hours left that week, then vectors, a new catalog and a backup. Every Saturday at 06:30, after Kaggle's weekly reset:
+
+```bash
+cp scripts/flickfind-weekly.service scripts/flickfind-weekly.timer ~/.config/systemd/user/
+systemctl --user enable --now flickfind-weekly.timer
+```
+
+The log is in `data/build/weekly.log`.
 
 ## Credits
 
