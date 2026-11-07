@@ -1,11 +1,13 @@
+import Ionicons from "@expo/vector-icons/Ionicons";
 import { useRef, useState } from "react";
-import { KeyboardAvoidingView, Platform, ScrollView, ScrollViewInstance, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, ScrollViewInstance, StyleSheet,
+  useWindowDimensions, View } from "react-native";
 
 import { api, Film } from "../api";
 import { useAuth } from "../auth";
-import { FilmGrid, MAX_WIDTH } from "../components/FilmGrid";
-import { Button, Chip, Field } from "../components/ui";
-import { colors, space } from "../theme";
+import { FilmGrid } from "../components/FilmGrid";
+import { AIBadge, Button, Card, Chip, Field, IconName, T } from "../components/ui";
+import { atmosphere, colors, glass, MAX_WIDTH, radius, shadow, space } from "../theme";
 
 interface Turn {
   message: string; films: Film[]; busy: boolean; error?: string; done?: boolean;
@@ -19,16 +21,24 @@ interface Answer {
 }
 const JUST_SHOW = "Just show me something";
 
-const EXAMPLES = ["I'm sad and want to laugh", "Something tense, not gory", "A cosy film for a rainy evening",
-  "I want a good cry", "Mind-bending but not slow"];
+const EXAMPLES: { label: string; icon: IconName }[] = [
+  { label: "I'm sad and want to laugh", icon: "happy-outline" },
+  { label: "Something tense, not gory", icon: "pulse-outline" },
+  { label: "A cosy film for a rainy evening", icon: "rainy-outline" },
+  { label: "I want a good cry", icon: "water-outline" },
+  { label: "Mind-bending but not slow", icon: "planet-outline" },
+  { label: "Films like Spirited Away", icon: "sparkles-outline" },
+];
 const newSession = () => Math.random().toString(36).slice(2, 12);
 
 export default function Discover() {
   const { me } = useAuth();
+  const { width } = useWindowDimensions();
   const [session, setSession] = useState(newSession);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [text, setText] = useState("");
   const scroll = useRef<ScrollViewInstance>(null);
+  const compact = width < 640;
 
   const update = (i: number, patch: Partial<Turn>) =>
     setTurns((ts) => ts.map((t, n) => (n === i ? { ...t, ...patch } : t)));
@@ -61,63 +71,91 @@ export default function Discover() {
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-      <ScrollView ref={scroll} contentContainerStyle={s.page}
-        onContentSizeChange={() => scroll.current?.scrollToEnd({ animated: true })}>
-        {turns.length === 0 && (
-          <View style={{ gap: space(2), paddingVertical: space(6) }}>
-            <Text style={s.hello}>How are you feeling{me ? `, ${me.name}` : ""}?</Text>
-            <Text style={{ color: colors.muted }}>Tell me your mood and what you want from tonight's film.</Text>
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-              {EXAMPLES.map((e) => <Chip key={e} label={e} onPress={() => send(e)} />)}
+      <ScrollView ref={scroll} contentContainerStyle={{ flexGrow: 1 }}
+        onContentSizeChange={() => { if (turns.length) scroll.current?.scrollToEnd({ animated: true }); }}>
+        {turns.length === 0 ? (
+          <View style={s.hero}>
+            <View style={[StyleSheet.absoluteFill, atmosphere]} pointerEvents="none" />
+            <View style={s.heroInner}>
+              <T v="eyebrow" style={{ textAlign: "center" }}>Mood-first film discovery</T>
+              <T v="display" style={[{ textAlign: "center" }, compact && { fontSize: 34, lineHeight: 40 }]}>
+                How are you feeling{me ? `, ${me.name}` : ""}?
+              </T>
+              <T v="body" style={{ color: colors.ash, textAlign: "center", maxWidth: 480 }}>
+                Tell me your mood and what you want from tonight's film. I'll find the ones that fit, and say why.
+              </T>
+              <View style={s.examples}>
+                {EXAMPLES.map((e) => <Chip key={e.label} icon={e.icon} label={e.label} onPress={() => send(e.label)} />)}
+              </View>
+              <T v="mono" style={{ textAlign: "center" }}>143K FILMS  |  TMDB · IMDb · OMDb · JUSTWATCH</T>
             </View>
           </View>
-        )}
-        {turns.length > 0 && (
-          <View style={{ alignSelf: "flex-start" }}>
-            <Button small label="New chat" onPress={() => { setTurns([]); setSession(newSession()); }} />
+        ) : (
+          <View style={s.page}>
+            <View style={{ alignSelf: "flex-start" }}>
+              <Button small kind="quiet" icon="add" label="New chat"
+                onPress={() => { setTurns([]); setSession(newSession()); }} />
+            </View>
+            {turns.map((t, i) => (
+              <View key={i} style={{ gap: space(2) }}>
+                <View style={s.you}><T v="body">{t.message}</T></View>
+                {t.understood && t.understood.length > 0 && (
+                  <T v="eyebrow" style={{ alignSelf: "flex-end" }}>Searching · {t.understood.join(" · ")}</T>
+                )}
+                {t.notes?.map((note) => (
+                  <View key={note} style={s.note}>
+                    <Ionicons name="information-circle-outline" size={16} color={colors.mist} />
+                    <T v="caption" style={{ color: colors.white, flexShrink: 1 }}>{note}</T>
+                  </View>
+                ))}
+                {t.question && (
+                  <Card style={{ gap: space(2), maxWidth: 640 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: space(1) }}>
+                      <AIBadge /><T v="eyebrow">A quick question</T>
+                    </View>
+                    <T v="subheading">{t.question}</T>
+                    <View style={[s.examples, { justifyContent: "flex-start" }]}>
+                      {[...(t.options ?? []), JUST_SHOW].map((o) => (
+                        <Chip key={o} label={o} icon={o === JUST_SHOW ? "shuffle" : undefined}
+                          onPress={() => answer(t, i, o)} />
+                      ))}
+                    </View>
+                  </Card>
+                )}
+                {t.films.length > 0 && (
+                  <FilmGrid films={t.films} onChange={(film) =>
+                    update(i, { films: t.films.map((f) => (f.tmdb_id === film.tmdb_id ? film : f)) })} />
+                )}
+                {t.busy && (
+                  <View style={s.busy}>
+                    <ActivityIndicator size="small" color={colors.mist} />
+                    <T v="eyebrow">Reading your mood · checking every film</T>
+                  </View>
+                )}
+                {t.error && <View style={s.note}><T v="caption" style={{ color: colors.white }}>{t.error}</T></View>}
+                {t.done && !t.question && !(t.films.length === 0 && t.notes?.length) && (
+                  <T v="caption">
+                    {t.films.length ? "That's every film that fits this request."
+                      : "Nothing fits this request. Try describing it differently."}
+                  </T>
+                )}
+                {!t.busy && !t.done && !t.question && i === turns.length - 1 && (
+                  <View style={{ alignSelf: "flex-start" }}>
+                    <Button icon="refresh" label="Find more" onPress={() => fetchFilms(i, t.message, t.noQuestions)} />
+                  </View>
+                )}
+              </View>
+            ))}
           </View>
         )}
-        {turns.map((t, i) => (
-          <View key={i} style={{ gap: space(1.5) }}>
-            <Text style={s.you}>{t.message}</Text>
-            {t.understood && t.understood.length > 0 && (
-              <Text style={s.understood}>Searching: {t.understood.join(" · ")}</Text>
-            )}
-            {t.notes?.map((note) => <Text key={note} style={s.note}>{note}</Text>)}
-            {t.question && (
-              <View style={{ gap: space(1) }}>
-                <Text style={s.question}>{t.question}</Text>
-                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-                  {[...(t.options ?? []), JUST_SHOW].map((o) => (
-                    <Chip key={o} label={o} onPress={() => answer(t, i, o)} />
-                  ))}
-                </View>
-              </View>
-            )}
-            {t.films.length > 0 && (
-              <FilmGrid films={t.films} onChange={(film) =>
-                update(i, { films: t.films.map((f) => (f.tmdb_id === film.tmdb_id ? film : f)) })} />
-            )}
-            {t.busy && <Text style={{ color: colors.muted }}>Finding films…</Text>}
-            {t.error && <Text style={{ color: colors.danger }}>{t.error}</Text>}
-            {t.done && !t.question && !(t.films.length === 0 && t.notes?.length) && (
-              <Text style={{ color: colors.muted }}>
-                {t.films.length ? "That's every film that fits this request." : "Nothing fits this request. Try describing it differently."}
-              </Text>
-            )}
-            {!t.busy && !t.done && !t.question && i === turns.length - 1 && (
-              <View style={{ alignSelf: "flex-start" }}>
-                <Button label="Find more" onPress={() => fetchFilms(i, t.message, t.noQuestions)} />
-              </View>
-            )}
-          </View>
-        ))}
       </ScrollView>
-      <View style={s.inputBar}>
-        <View style={s.inputRow}>
-          <Field style={{ flex: 1 }} placeholder="What are you in the mood for?" value={text} onChangeText={setText}
+      <View style={s.inputWrap}>
+        <View style={[s.inputBar, glass]}>
+          <Ionicons name="sparkles-outline" size={18} color={colors.smoke} style={{ marginLeft: space(1) }} />
+          <Field style={s.input} placeholder="What are you in the mood for?" value={text} onChangeText={setText}
             onSubmitEditing={() => send(text)} returnKeyType="send" accessibilityLabel="Your mood" />
-          <Button kind="primary" label="Send" onPress={() => send(text)} disabled={!text.trim()} />
+          <Button kind="primary" icon="arrow-up" label="Send" onPress={() => send(text)} disabled={!text.trim()}
+            iconOnly={compact} />
         </View>
       </View>
     </KeyboardAvoidingView>
@@ -125,13 +163,18 @@ export default function Discover() {
 }
 
 const s = StyleSheet.create({
-  page: { padding: space(2), gap: space(4), maxWidth: MAX_WIDTH, width: "100%", alignSelf: "center" },
-  hello: { color: colors.text, fontSize: 28, fontWeight: "700" },
-  understood: { color: colors.muted, fontSize: 13, alignSelf: "flex-end" },
-  note: { color: colors.accent, fontSize: 14 },
-  question: { color: colors.text, fontSize: 17, fontWeight: "600" },
-  you: { color: colors.text, fontSize: 17, fontWeight: "600", alignSelf: "flex-end", backgroundColor: colors.glass,
-    borderColor: colors.border, borderWidth: 1, borderRadius: 12, paddingVertical: 8, paddingHorizontal: 12, maxWidth: "85%" },
-  inputBar: { borderTopWidth: 1, borderTopColor: colors.border, padding: space(1.5) },
-  inputRow: { flexDirection: "row", gap: space(1), maxWidth: MAX_WIDTH, width: "100%", alignSelf: "center" },
+  hero: { flexGrow: 1, justifyContent: "center", paddingVertical: space(8), paddingHorizontal: space(2), overflow: "hidden" },
+  heroInner: { gap: space(3), alignItems: "center", maxWidth: 760, width: "100%", alignSelf: "center" },
+  examples: { flexDirection: "row", flexWrap: "wrap", gap: space(1), justifyContent: "center" },
+  page: { padding: space(2), paddingTop: space(3), gap: space(5), maxWidth: MAX_WIDTH, width: "100%", alignSelf: "center" },
+  you: { alignSelf: "flex-end", backgroundColor: colors.recessed, borderRadius: radius.card, paddingVertical: space(1.25),
+    paddingHorizontal: space(2), maxWidth: "85%", boxShadow: shadow.edge },
+  note: { flexDirection: "row", alignItems: "center", gap: space(1), backgroundColor: colors.ember,
+    borderRadius: radius.button, paddingVertical: space(1), paddingHorizontal: space(1.5), alignSelf: "flex-start" },
+  busy: { flexDirection: "row", alignItems: "center", gap: space(1.5) },
+  inputWrap: { paddingHorizontal: space(2), paddingBottom: space(2), paddingTop: space(1) },
+  inputBar: { flexDirection: "row", alignItems: "center", gap: space(1), padding: space(1), borderRadius: radius.card,
+    borderWidth: 1, borderColor: colors.border, backgroundColor: "rgba(7,8,10,0.8)", maxWidth: 840, width: "100%",
+    alignSelf: "center", boxShadow: shadow.edge },
+  input: { flex: 1, minWidth: 0, backgroundColor: "transparent", boxShadow: "none", paddingHorizontal: space(0.5) },
 });

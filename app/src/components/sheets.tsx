@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { Text, View } from "react-native";
+import { View } from "react-native";
 
 import { BlockReason, Film } from "../api";
 import { useAuth } from "../auth";
-import { colors } from "../theme";
-import { Button, Chip, Field, Sheet, Stars } from "./ui";
+import { space } from "../theme";
+import { Button, Chip, Field, IconName, Sheet, Stars, T } from "./ui";
 
 export interface WatchedAnswers { rating: number; comment?: string; mood_match?: number; mindset?: string }
 
@@ -20,17 +20,18 @@ export function WatchedSheet({ film, onSave, onClose }: {
   const close = () => { setRating(0); setComment(""); setMoodMatch(0); setMindset(""); onClose(); };
   return (
     <Sheet visible={!!film} title={`How was ${film?.title}?`} onClose={close}>
+      <T v="eyebrow">Your rating</T>
       <Stars value={rating} onChange={setRating} label="Your rating" />
       <Field placeholder="Anything you'd like to remember? (optional)" value={comment} onChangeText={setComment} multiline />
       {me?.niche_questions && (
         <>
-          <Text style={{ color: colors.text }}>How well did it match your mood?</Text>
+          <T v="eyebrow" style={{ marginTop: space(1) }}>How well did it match your mood?</T>
           <Stars value={moodMatch} onChange={setMoodMatch} label="Mood match" />
-          <Text style={{ color: colors.text }}>What mindset should someone be in to watch this?</Text>
+          <T v="eyebrow" style={{ marginTop: space(1) }}>What mindset should someone be in to watch this?</T>
           <Field placeholder="e.g. a quiet evening, ready for something heavy" value={mindset} onChangeText={setMindset} />
         </>
       )}
-      <Button kind="primary" label="Save" disabled={!rating} onPress={() => {
+      <Button kind="primary" icon="checkmark" label="Save" disabled={!rating} onPress={() => {
         onSave({ rating, comment: comment.trim() || undefined, mood_match: moodMatch || undefined,
           mindset: mindset.trim() || undefined });
         close();
@@ -39,13 +40,13 @@ export function WatchedSheet({ film, onSave, onClose }: {
   );
 }
 
-const REASONS: { key: BlockReason; label: string }[] = [
-  { key: "watched", label: "Already watched it" },
-  { key: "language", label: "Not this language" },
-  { key: "actor", label: "Not this actor" },
-  { key: "theme", label: "Not this kind of story" },
-  { key: "mainstream", label: "Too mainstream" },
-  { key: "other", label: "Something else" },
+const REASONS: { key: BlockReason; label: string; icon: IconName }[] = [
+  { key: "watched", label: "Already watched it", icon: "eye-outline" },
+  { key: "language", label: "Not this language", icon: "language-outline" },
+  { key: "actor", label: "Not this actor", icon: "person-outline" },
+  { key: "theme", label: "Not this kind of story", icon: "book-outline" },
+  { key: "mainstream", label: "Too mainstream", icon: "trending-up-outline" },
+  { key: "other", label: "Something else", icon: "ellipsis-horizontal" },
 ];
 
 /** "Reject": the reason changes future picks (language and actor are avoided, theme feeds the disliked profile). */
@@ -58,22 +59,26 @@ export function RejectSheet({ film, onSave, onClose }: {
   const ready = reason && (reason !== "actor" || actor);
   return (
     <Sheet visible={!!film} title={`Why not ${film?.title}?`} onClose={close}>
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+      <T v="eyebrow">Your reason shapes what you see next</T>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space(1) }}>
         {REASONS.map((r) => (
-          <Chip key={r.key} label={r.label} state={reason === r.key ? "on" : "off"} onPress={() => setReason(r.key)} />
+          <Chip key={r.key} icon={r.icon} label={r.label} state={reason === r.key ? "on" : "off"} onPress={() => setReason(r.key)} />
         ))}
       </View>
       {reason === "actor" && (
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-          {(film?.cast ?? []).map((name) => (
-            <Chip key={name} label={name} state={actor === name ? "on" : "off"} onPress={() => setActor(name)} />
-          ))}
-        </View>
+        <>
+          <T v="eyebrow">Which actor?</T>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space(1) }}>
+            {(film?.cast ?? []).map((name) => (
+              <Chip key={name} label={name} state={actor === name ? "on" : "off"} onPress={() => setActor(name)} />
+            ))}
+          </View>
+        </>
       )}
-      <Text style={{ color: colors.muted, fontSize: 13 }}>
+      <T v="caption">
         {reason === "watched" ? "It moves to your Watched list." : "It won't be suggested again unless you unblock it."}
-      </Text>
-      <Button kind="danger" label="Reject" disabled={!ready} onPress={() => {
+      </T>
+      <Button kind="primary" icon="close" label="Reject" disabled={!ready} onPress={() => {
         onSave(reason!, reason === "actor" ? actor! : undefined);
         close();
       }} />

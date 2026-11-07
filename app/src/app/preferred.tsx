@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
-import { ScrollView, Text, View } from "react-native";
+import { ScrollView, StyleSheet, View } from "react-native";
 
 import { api, Me } from "../api";
 import { useAuth } from "../auth";
-import { MAX_WIDTH } from "../components/FilmGrid";
-import { Button, Chip, Field, Muted } from "../components/ui";
+import { Button, Card, Chip, Field, T } from "../components/ui";
 import { colors, space } from "../theme";
 
 type Pick = "off" | "on" | "avoid";
@@ -36,23 +35,39 @@ export default function Preferred() {
   };
 
   return (
-    <ScrollView contentContainerStyle={{ padding: space(2), gap: space(2), maxWidth: 720, width: "100%", alignSelf: "center" }}>
-      <Text style={{ color: colors.text, fontSize: 24, fontWeight: "700" }}>Preferred</Text>
-      <Muted>Tap a genre once to favour it, twice to avoid it, a third time to clear it.</Muted>
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, maxWidth: MAX_WIDTH }}>
-        {genres.map((g) => (
-          <Chip key={g} label={g} state={picks[g] ?? "off"}
-            onPress={() => setPicks({ ...picks, [g]: NEXT[picks[g] ?? "off"] })} />
-        ))}
+    <ScrollView contentContainerStyle={s.page}>
+      <View style={{ gap: space(1) }}>
+        <T v="eyebrow">Preferences</T>
+        <T v="heading">Preferred</T>
+        <T v="small">These shape every recommendation, alongside what you watch and rate.</T>
       </View>
-      <Text style={{ color: colors.text, fontSize: 17, fontWeight: "600", marginTop: space(1) }}>About me</Text>
-      <Muted>Anything that helps: films you love, what you watch with, what you can't stand.</Muted>
-      <Field value={about} onChangeText={setAbout} multiline maxLength={2000} style={{ minHeight: 120, textAlignVertical: "top" }}
-        placeholder="e.g. I love slow Japanese dramas and anything by Wong Kar-wai. No horror please." />
+      <Card style={{ gap: space(2) }}>
+        <T v="subheading">Genres</T>
+        <T v="eyebrow" style={{ color: colors.smoke }}>Tap once to favour · twice to avoid · again to clear</T>
+        <View style={s.chips}>
+          {genres.map((g) => (
+            <Chip key={g} label={g} state={picks[g] ?? "off"} icon={picks[g] === "on" ? "heart" : undefined}
+              onPress={() => setPicks({ ...picks, [g]: NEXT[picks[g] ?? "off"] })} />
+          ))}
+        </View>
+      </Card>
+      <Card style={{ gap: space(2) }}>
+        <T v="subheading">About me</T>
+        <T v="small">Anything that helps: films you love, who you watch with, what you can't stand.</T>
+        <Field value={about} onChangeText={setAbout} multiline maxLength={2000}
+          style={{ minHeight: 140, textAlignVertical: "top" }}
+          placeholder="e.g. I love slow Japanese dramas and anything by Wong Kar-wai. No horror please." />
+        <T v="mono" style={{ alignSelf: "flex-end" }}>{about.length} / 2000</T>
+      </Card>
       <View style={{ flexDirection: "row", gap: space(2), alignItems: "center" }}>
-        <Button kind="primary" label="Save" onPress={save} />
-        {status && <Text style={{ color: status === "Saved" ? colors.good : colors.danger }}>{status}</Text>}
+        <Button kind="primary" icon="checkmark" label="Save preferences" onPress={save} />
+        {status && <T v="eyebrow" style={{ color: status === "Saved" ? colors.mist : colors.white }}>{status}</T>}
       </View>
     </ScrollView>
   );
 }
+
+const s = StyleSheet.create({
+  page: { padding: space(2), paddingTop: space(4), gap: space(3), maxWidth: 760, width: "100%", alignSelf: "center" },
+  chips: { flexDirection: "row", flexWrap: "wrap", gap: space(1) },
+});

@@ -1,13 +1,12 @@
 import { useState } from "react";
-import { Text, View } from "react-native";
+import { View } from "react-native";
 
 import { api, BlockReason, Film } from "../api";
 import { useAuth } from "../auth";
 import { colors, space } from "../theme";
+import { T } from "./ui";
 import { FilmCard } from "./FilmCard";
 import { RejectSheet, WatchedAnswers, WatchedSheet } from "./sheets";
-
-export const MAX_WIDTH = 1200;
 
 /** A responsive grid of film cards that runs the card actions against the API and reports the updated film. */
 export function FilmGrid({ films, onChange }: { films: Film[]; onChange: (film: Film, removed?: boolean) => void }) {
@@ -35,7 +34,7 @@ export function FilmGrid({ films, onChange }: { films: Film[]; onChange: (film: 
 
   return (
     <View style={{ gap: space(1) }} onLayout={(e) => setInner(e.nativeEvent.layout.width)}>
-      {error && <Text style={{ color: colors.danger }}>{error}</Text>}
+      {error && <T v="caption" style={{ color: colors.white }}>{error}</T>}
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space(2) }}>
         {inner > 0 && films.map((f) => (
           <FilmCard key={f.tmdb_id} film={f} width={cardWidth} actions={{

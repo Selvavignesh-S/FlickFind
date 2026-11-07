@@ -33,7 +33,8 @@ export interface Film {
   mood_tags?: string[];
   effect?: string;
   watch_when?: string;
-  why?: string;
+  why?: string; // the AI fit check's reason for this request
+  fit?: number; // the AI fit check's score, 0-10
   ratings?: { imdb: number | null; rotten_tomatoes: number | null; flickfind: number | null; flickfind_votes: number };
   library: LibraryEntry | null;
   missing?: boolean; // left the catalog; only the saved title/year/poster remain

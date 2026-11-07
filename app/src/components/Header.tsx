@@ -1,12 +1,14 @@
+import Ionicons from "@expo/vector-icons/Ionicons";
 import { Link, usePathname } from "expo-router";
 import { useState } from "react";
-import { Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { Pressable, StyleSheet, useWindowDimensions, View } from "react-native";
 
 import { useAuth } from "../auth";
-import { colors, space } from "../theme";
-import { MAX_WIDTH } from "./FilmGrid";
+import { colors, glass, MAX_WIDTH, radius, shadow, space, type } from "../theme";
+import { Badge, Logo, T } from "./ui";
 
 const LINKS = [
+  { href: "/", label: "Discover" },
   { href: "/watchlist", label: "Watchlist" },
   { href: "/watched", label: "Watched" },
   { href: "/preferred", label: "Preferred" },
@@ -14,41 +16,52 @@ const LINKS = [
   { href: "/profile", label: "Profile" },
 ] as const;
 
-/** Logo, the user's Normal/Niche label and the page links; the links fold into a menu on narrow screens. */
+/** A floating glass bar: the mark and the user's taste on the left, page links on the right
+ *  (folded into a menu on narrow screens). */
 export function Header() {
   const { me } = useAuth();
   const path = usePathname();
   const { width } = useWindowDimensions();
   const [menu, setMenu] = useState(false);
-  const narrow = width < 720;
-  const links = LINKS.map((l) => (
-    <Link key={l.href} href={l.href} onPress={() => setMenu(false)}
-      style={[s.link, path === l.href && { color: colors.accent }]}>{l.label}</Link>
-  ));
+  const narrow = width < 760;
+  const links = LINKS.map((l) => {
+    const active = path === l.href;
+    return (
+      <Link key={l.href} href={l.href} onPress={() => setMenu(false)}
+        style={[type.label, { color: active ? colors.white : colors.ash }, narrow && s.menuLink]}>{l.label}</Link>
+    );
+  });
   return (
     <View style={s.wrap}>
-      <View style={s.bar}>
-        <Link href="/" style={s.logo} accessibilityLabel="FlickFind, discover">FlickFind</Link>
-        {me && <Text style={s.badge}>{me.taste}</Text>}
+      <View style={[s.bar, glass]}>
+        <Link href="/" asChild>
+          <Pressable accessibilityRole="link" accessibilityLabel="FlickFind, discover" style={s.brand}>
+            <Logo />
+            <T v="label" style={{ fontSize: 14 }}>FlickFind</T>
+          </Pressable>
+        </Link>
+        {me && <Badge label={me.taste} />}
         <View style={{ flex: 1 }} />
         {narrow
           ? <Pressable onPress={() => setMenu(!menu)} accessibilityRole="button" accessibilityLabel="Menu" hitSlop={8}>
-              <Text style={s.link}>{menu ? "Close" : "Menu"}</Text>
+              <Ionicons name={menu ? "close" : "menu"} size={22} color={colors.mist} />
             </Pressable>
-          : <View style={{ flexDirection: "row", gap: space(2.5) }}>{links}</View>}
+          : <View style={s.links}>{links}</View>}
       </View>
-      {narrow && menu && <View style={s.menu}>{links}</View>}
+      {narrow && menu && <View style={[s.menu, glass]}>{links}</View>}
     </View>
   );
 }
 
 const s = StyleSheet.create({
-  wrap: { borderBottomWidth: 1, borderBottomColor: colors.border },
-  bar: { flexDirection: "row", alignItems: "center", gap: space(1.5), paddingHorizontal: space(2), paddingVertical: space(1.5),
-    maxWidth: MAX_WIDTH, width: "100%", alignSelf: "center" },
-  logo: { color: colors.accent, fontSize: 20, fontWeight: "800", letterSpacing: 0.5 },
-  badge: { color: colors.text, fontSize: 12, borderWidth: 1, borderColor: colors.border, borderRadius: 10,
-    paddingHorizontal: 8, paddingVertical: 2 },
-  link: { color: colors.text, fontSize: 15, fontWeight: "500" },
-  menu: { paddingHorizontal: space(2), paddingBottom: space(2), gap: space(1.5) },
+  wrap: { paddingHorizontal: space(2), paddingTop: space(1.5), maxWidth: MAX_WIDTH + space(4), width: "100%",
+    alignSelf: "center", zIndex: 10 },
+  bar: { flexDirection: "row", alignItems: "center", gap: space(1.5), paddingVertical: space(1), paddingHorizontal: space(2),
+    borderRadius: radius.button + 4, borderWidth: 1, borderColor: colors.border, backgroundColor: "rgba(7,8,10,0.72)",
+    boxShadow: shadow.edge },
+  brand: { flexDirection: "row", alignItems: "center", gap: space(1) },
+  links: { flexDirection: "row", alignItems: "center", gap: space(3) },
+  menu: { marginTop: space(1), padding: space(1), borderRadius: radius.card, borderWidth: 1, borderColor: colors.border,
+    backgroundColor: "rgba(7,8,10,0.92)" },
+  menuLink: { paddingVertical: space(1.25), paddingHorizontal: space(1.5), fontSize: 15 },
 });
