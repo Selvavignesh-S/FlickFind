@@ -17,10 +17,10 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator
 
 from backend import db, omdb
-from backend.catalog import POSTER, Catalog
+from backend.catalog import NEUTRAL, POSTER, Catalog
 from backend.understand import query_for
 
-NICHE_QUESTIONS_AT = 0.5  # niche users get the extra "watched" questions
+NICHE_QUESTIONS_AT = 0.6  # niche users get the extra "watched" questions
 app = FastAPI(title="FlickFind")
 # shortcut: any origin, fine while the API is only reachable on your laptop / tailnet; list the app's origins if hosted
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -83,7 +83,8 @@ def register(body: Signup, con=Depends(get_db)):
     if con.execute("SELECT 1 FROM users WHERE email = ?", (body.email,)).fetchone():
         raise HTTPException(409, "An account with this email already exists")
     pw = bcrypt.hashpw(body.password.encode(), bcrypt.gensalt())
-    cur = con.execute("INSERT INTO users (email, password_hash, name) VALUES (?, ?, ?)", (body.email, pw, body.name))
+    cur = con.execute("INSERT INTO users (email, password_hash, name, niche) VALUES (?, ?, ?, ?)",
+                      (body.email, pw, body.name, NEUTRAL))  # every new user starts with no lean either way
     return {"token": make_token(cur.lastrowid)}
 
 
@@ -100,7 +101,12 @@ def login(body: Login, con=Depends(get_db)):
 def profile(user):
     return {"id": user["id"], "email": user["email"], "name": user["name"], "about": user["about"],
             "genres_like": json.loads(user["genres_like"]), "genres_avoid": json.loads(user["genres_avoid"]),
-            "niche": round(user["niche"], 3), "niche_questions": user["niche"] >= NICHE_QUESTIONS_AT}
+            "niche": round(user["niche"], 3), "taste": taste_label(user["niche"]),
+            "niche_questions": user["niche"] >= NICHE_QUESTIONS_AT}
+
+
+def taste_label(n):
+    return "Mainstream" if n < 0.4 else "Niche" if n > NICHE_QUESTIONS_AT else "Balanced"
 
 
 class Preferences(BaseModel):
@@ -211,7 +217,7 @@ def save_to_library(tmdb_id: int, body: LibraryUpdate, user=Depends(current_user
     niche = user["niche"]
     if reason == "mainstream":
         niche = min(1.0, niche + 0.1)
-    elif status == "watched" and (body.rating or 0) >= 4:  # loving a film pulls the user toward its obscurity
+    elif status == "watched" and (body.rating or 0) >= 4:  # loving a film pulls the lean toward it: famous or obscure
         niche += 0.1 * (film["obscurity"] - niche)
     # shortcut: no daily cap on niche drift yet; add one in P4 if a burst of ratings swings it too far
     con.execute("UPDATE users SET niche = ? WHERE id = ?", (niche, user["id"]))

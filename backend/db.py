@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS users (
     about TEXT NOT NULL DEFAULT '',
     genres_like TEXT NOT NULL DEFAULT '[]',   -- JSON list
     genres_avoid TEXT NOT NULL DEFAULT '[]',  -- JSON list
-    niche REAL NOT NULL DEFAULT 0.25,         -- 0 = mainstream, 1 = niche; drifts with ratings and blocks
+    niche REAL NOT NULL DEFAULT 0.5,          -- 0 = mainstream, 0.5 = no lean (new users), 1 = niche; learned from activity
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS library (

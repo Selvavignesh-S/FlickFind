@@ -64,10 +64,16 @@ def main():
     if not rows:
         raise SystemExit("No films with both a profile and a vector yet.")
 
-    # obscurity: 0 = most-voted film in the catalog, 1 = least-voted (drives Normal -> Niche drift)
-    order = np.argsort(np.argsort([-r["imdb_votes"] for r in rows]))
-    for r, rank in zip(rows, order):
-        r["obscurity"] = round(float(rank) / max(len(rows) - 1, 1), 4)
+    # obscurity: 0 = most-voted film *in its language group*, 1 = least-voted. Within the group, so a famous Tamil or
+    # French film counts as famous; it feeds the user's mainstream <-> niche lean and its drift.
+    by_group = {}
+    for n, r in enumerate(rows):
+        by_group.setdefault(r["group"], []).append(n)
+    for idx in by_group.values():
+        votes = np.array([rows[n]["imdb_votes"] for n in idx])
+        more = len(votes) - np.searchsorted(np.sort(votes), votes, side="right")  # films with more votes; ties share
+        for n, rank in zip(idx, more):
+            rows[n]["obscurity"] = round(float(rank) / max(len(idx) - 1, 1), 4)
 
     vecs = pa.FixedSizeListArray.from_arrays(pa.array(np.concatenate([r.pop("vec") for r in rows]), pa.float16()),
                                              embed.DIMS)

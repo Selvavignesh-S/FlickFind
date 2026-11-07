@@ -4,6 +4,7 @@ Searching with the raw message matches words, not moods ("a good cry" found film
 writes the film the user wants in the catalog's own vocabulary and layout (builder.embed.document), so the query
 vector lands among films that would do that to the viewer.
 Gemini Flash-Lite first, Groq as the fallback; if both fail, the raw message and keyword rules are used instead.
+Temperature 0, so the same message gets the same reading (and results) every time.
 """
 import json
 import os
@@ -59,14 +60,14 @@ def ask_gemini(message):
     from google.genai import types
     _gemini = _gemini or genai.Client(api_key=os.environ["GEMINI_API_KEY"])
     r = _gemini.models.generate_content(model=GEMINI_MODEL, contents=message, config=types.GenerateContentConfig(
-        system_instruction=SYSTEM, temperature=0.3, response_mime_type="application/json", response_json_schema=SCHEMA))
+        system_instruction=SYSTEM, temperature=0, response_mime_type="application/json", response_json_schema=SCHEMA))
     return json.loads(r.text)
 
 
 def ask_groq(message):
     r = httpx.post("https://api.groq.com/openai/v1/chat/completions", timeout=20,
                    headers={"Authorization": f"Bearer {os.environ['GROQ_API_KEY']}"},
-                   json={"model": GROQ_MODEL, "temperature": 0.3, "reasoning_effort": "low",
+                   json={"model": GROQ_MODEL, "temperature": 0, "reasoning_effort": "low",
                          "response_format": {"type": "json_schema", "json_schema": {"name": "film", "schema": SCHEMA}},
                          "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": message}]})
     r.raise_for_status()

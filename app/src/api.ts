@@ -46,7 +46,8 @@ export interface Me {
   about: string;
   genres_like: string[];
   genres_avoid: string[];
-  niche: number;
+  niche: number; // 0 = mainstream, 0.5 = no lean (new users), 1 = niche
+  taste: "Mainstream" | "Balanced" | "Niche";
   niche_questions: boolean;
 }
 

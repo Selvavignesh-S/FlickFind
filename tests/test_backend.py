@@ -28,7 +28,7 @@ def fake_catalog():
         "tagline": [None] * 6, "poster_path": ["/p.jpg"] * 6, "imdb_rating": [7.0] * 6, "imdb_votes": [1000] * 6,
         "director": [["Dir"]] * 6, "cast": [f[3] for f in FILMS], "providers_in": [[]] * 6,
         "mood_tags": [["tense"]] * 6, "effect": ["tension"] * 6, "pace": ["medium"] * 6, "intensity": [3] * 6,
-        "watch_when": ["you want a ride."] * 6, "obscurity": [f[5] for f in FILMS],
+        "watch_when": ["you want a ride."] * 6, "obscurity": [f[5] for f in FILMS], "group": ["english"] * 6,
     }
     table = pa.table(cols).append_column("vec", pa.FixedSizeListArray.from_arrays(pa.array(vecs.ravel()), DIMS))
     return Catalog(table, "test")
@@ -97,9 +97,12 @@ def test_preferences_and_avoided_genres(api):
 
 
 def test_niche_drift(api):
-    assert api.get("/me").json()["niche"] == 0.25
-    api.put("/library/2", json={"status": "watched", "rating": 5})  # obscurity 0.9
-    assert api.get("/me").json()["niche"] == pytest.approx(0.25 + 0.1 * (0.9 - 0.25), abs=1e-3)
+    me = api.get("/me").json()
+    assert (me["niche"], me["taste"], me["niche_questions"]) == (0.5, "Balanced", False)  # new users: no lean
+    api.put("/library/1", json={"status": "watched", "rating": 5})  # a famous film (obscurity 0.1) pulls mainstream
+    assert api.get("/me").json()["niche"] == pytest.approx(0.5 + 0.1 * (0.1 - 0.5), abs=1e-3)
+    api.put("/library/2", json={"status": "watched", "rating": 5})  # an obscure one (0.9) pulls the other way
+    assert api.get("/me").json()["niche"] == pytest.approx(0.46 + 0.1 * (0.9 - 0.46), abs=1e-3)
     before = api.get("/me").json()["niche"]
     api.put("/library/3", json={"status": "watched", "rating": 2})  # a low rating doesn't move it
     assert api.get("/me").json()["niche"] == before
@@ -148,18 +151,19 @@ def test_effects_for():
     assert effects_for("anything really") == []
 
 
-def small_catalog(vecs, effects, obscurity, ratings):
-    """A catalog of len(vecs) films whose vectors, effects, obscurity and IMDb ratings are given."""
+def small_catalog(vecs, effects, obscurity, ratings, groups=None):
+    """A catalog of len(vecs) films whose vectors, effects, obscurity, IMDb ratings (and language groups) are given."""
     n = len(vecs)
     v = np.zeros((n, DIMS), dtype=np.float16)
     v[:, :len(vecs[0])] = vecs
     v /= np.linalg.norm(v.astype(np.float32), axis=1, keepdims=True)
     cols = {"tmdb_id": list(range(1, n + 1)), "language": ["en"] * n, "cast": [[]] * n, "genres": [[]] * n,
-            "effect": effects, "obscurity": obscurity, "imdb_rating": ratings}
+            "effect": effects, "obscurity": obscurity, "imdb_rating": ratings, "imdb_votes": [1000] * n,
+            "group": groups or ["english"] * n}
     return Catalog(pa.table(cols).append_column("vec", pa.FixedSizeListArray.from_arrays(pa.array(v.ravel()), DIMS)), "t")
 
 
-def test_ranking_effect_popularity_and_variety():
+def test_ranking_effect_lean_quality_and_variety(monkeypatch):
     q = np.zeros(DIMS, dtype=np.float32)
     q[0] = 1
     ids = lambda hits: [i for i, _ in hits]  # noqa: E731
@@ -168,10 +172,26 @@ def test_ranking_effect_popularity_and_variety():
     c = small_catalog([[1, 0.1], [1, 0.1]], ["lift", "catharsis"], [0.5, 0.5], [7.0, 7.0])
     assert ids(c.search(q, k=1, effects=["catharsis"])) == [2]
 
-    # a famous, well-rated film just behind an obscure one: Normal users get the famous one, Niche users the closer fit
-    c = small_catalog([[1, 0.15], [1, 0.25]], ["lift", "lift"], [0.95, 0.0], [6.0, 8.5])
-    assert ids(c.search(q, k=1, niche=0.25)) == [2]
+    # a little-known film fits slightly better than a famous one: a new user gets the better fit; only a learned
+    # mainstream lean brings the famous one forward, and a niche lean keeps the better fit
+    c = small_catalog([[1, 0.15], [1, 0.25]], ["lift", "lift"], [0.95, 0.0], [7.0, 7.0])
+    assert ids(c.search(q, k=1)) == [1]
+    assert ids(c.search(q, k=1, niche=0.0)) == [2]
     assert ids(c.search(q, k=1, niche=1.0)) == [1]
+
+    # equal fit, one Indian film rated 7.0 and one English film rated 6.8: quality is judged within each language,
+    # where 7.0 is the lowest of the Indian films and 6.8 the highest of the English ones, so the English film wins
+    away = [0, 0, 1]
+    c = small_catalog([[1, 0.2, 0], [1, 0.2, 0], away, away, away, away], ["lift"] * 6, [0.5] * 6,
+                      [7.0, 6.8, 7.5, 8.0, 5.0, 6.0], ["indian", "english", "indian", "indian", "english", "english"])
+    assert ids(c.search(q, k=1)) == [2]
+
+    # outside the shortlist of best fits nothing gets in, however good or famous
+    from backend import catalog as catalog_module
+    monkeypatch.setattr(catalog_module, "SHORTLIST", 1)
+    c = small_catalog([[1, 0.1], [1, 0.2]], ["lift", "lift"], [0.9, 0.0], [5.0, 9.0])
+    assert ids(c.search(q, k=2, niche=0.0)) == [1]
+    monkeypatch.undo()
 
     # films 1 and 2 are near-copies off to one side of the query, film 3 is about as close on the other side:
     # without variety the picks are 1, 2; with it, 1, 3

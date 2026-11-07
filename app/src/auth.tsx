@@ -57,5 +57,3 @@ export function useAuth() {
   if (!auth) throw new Error("useAuth must be used inside AuthProvider");
   return auth;
 }
-
-export const nicheLabel = (n: number) => (n >= 0.5 ? "Niche" : "Normal");

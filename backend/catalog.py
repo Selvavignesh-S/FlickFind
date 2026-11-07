@@ -9,9 +9,13 @@ from builder import embed
 from builder.common import BUILD
 
 POSTER = "https://image.tmdb.org/t/p/w342"
-# Ranking weights, on the scale of mood similarity (top matches differ by ~0.05). Tune with builder/quality.py.
+# Ranking: mood fit decides; quality and the user's own lean only reorder films that already fit (no language or
+# popularity edge for a new user). Weights are on the scale of mood similarity; tune with builder/quality.py.
 EFFECT_BONUS = 0.06  # film has the effect the message asks for
-POPULARITY = 0.2     # well-known, well-rated films; scaled by (1 - niche), so it fades as a user drifts to niche
+SHORTLIST = 100      # only the best mood fits are considered at all
+QUALITY = 0.1        # rating vs films in the same language, weighted by votes (0.1 keeps sub-5.5 films out)
+LEAN = 0.06          # the user's learned lean: at taste 0 well-known films get +LEAN, at taste 1 lesser-known ones do
+NEUTRAL = 0.5        # where every new user's taste starts: no lean either way
 VARIETY = 0.25       # how hard the 5 picks are pushed apart (0 = pure ranking)
 POOL = 60            # candidates considered for the variety step
 CARD = ["tmdb_id", "imdb_id", "title", "original_title", "year", "runtime", "language", "genres", "overview",
@@ -30,11 +34,9 @@ class Catalog:
         self.language = np.array(table["language"].to_pylist(), dtype=object)
         self.cast = table["cast"].to_pylist()
         self.genres = table["genres"].to_pylist()
-        self.obscurity = table["obscurity"].to_numpy()
         self.effect = np.array(table["effect"].to_pylist(), dtype=object)
-        rating = np.nan_to_num(table["imdb_rating"].to_numpy(zero_copy_only=False).astype(float), nan=5.0)
-        # 0..1: half how many people voted (vote rank), half how well they rated it (5 -> 0, 9+ -> 1)
-        self.prior = 0.5 * (1 - self.obscurity) + 0.5 * np.clip((rating - 5) / 4, 0, 1)
+        self.popularity = 1 - table["obscurity"].to_numpy()  # vote rank within the film's language group (builder.pack)
+        self.quality = quality(table)
 
     @classmethod
     def load(cls, folder=BUILD / "catalog"):
@@ -58,9 +60,10 @@ class Catalog:
         return rows
 
     def search(self, query_vec, k=5, exclude=(), avoid_languages=(), avoid_actors=(), avoid_genres=(), effects=(),
-               niche=0.25):
-        """Top-k films: mood similarity + effect match + a popularity prior that fades with niche, then spread apart
-        so the picks aren't near-copies. Excluded ids and anything matching an avoid list never appear."""
+               niche=NEUTRAL):
+        """Top-k films. The SHORTLIST best mood fits (similarity + effect match) are reordered by quality and the
+        user's learned lean, then spread apart so the picks aren't near-copies. Excluded ids and anything matching an
+        avoid list never appear."""
         ok = np.ones(len(self.ids), dtype=bool)
         ok[[self.index[i] for i in exclude if i in self.index]] = False
         if avoid_languages:
@@ -72,12 +75,16 @@ class Catalog:
         if avoid_genres:
             genres = set(avoid_genres)
             ok &= np.array([genres.isdisjoint(g) for g in self.genres])
-        scores = self.vecs @ query_vec + POPULARITY * (1 - niche) * self.prior
+        fit = self.vecs @ query_vec
         if effects:
-            scores = scores + EFFECT_BONUS * np.isin(self.effect, list(effects))
-        scores = np.where(ok, scores, -np.inf)
-        pool = np.argsort(-scores)[:POOL]
-        pool = list(pool[np.isfinite(scores[pool])])
+            fit = fit + EFFECT_BONUS * np.isin(self.effect, list(effects))
+        fit = np.where(ok, fit, -np.inf)
+        best = np.argsort(-fit)[:SHORTLIST]
+        best = best[np.isfinite(fit[best])]
+        lean = LEAN * 2 * (NEUTRAL - niche)  # > 0 favours well-known films, < 0 lesser-known, 0 for a new user
+        scores = np.full(len(fit), -np.inf)
+        scores[best] = fit[best] + QUALITY * self.quality[best] + lean * self.popularity[best]
+        pool = list(best[np.argsort(-scores[best])][:POOL])
 
         picked = []  # maximal marginal relevance: each pick trades its score against similarity to earlier picks
         while pool and len(picked) < k:
@@ -85,6 +92,24 @@ class Catalog:
             best = int(np.argmax(scores[pool] - VARIETY * penalty))
             picked.append(pool.pop(best))
         return [(int(self.ids[i]), float(scores[i])) for i in picked]
+
+
+def quality(table):
+    """0..1 per film: its IMDb rating ranked against films in its own language group, after pulling ratings with few
+    votes toward the group average (a Bayesian average; a rating counts half once it has the group's median votes).
+    Ranking within the group means no language gains from rating more generously or voting more."""
+    group = np.array(table["group"].to_pylist(), dtype=object)
+    votes = table["imdb_votes"].to_numpy(zero_copy_only=False).astype(float)
+    rating = table["imdb_rating"].to_numpy(zero_copy_only=False).astype(float)
+    out = np.zeros(len(votes))
+    for g in set(group):
+        m = group == g
+        r = np.nan_to_num(rating[m], nan=np.nanmean(rating[m]))
+        k = max(np.median(votes[m]), 1)
+        weighted = (votes[m] * r + k * r.mean()) / (votes[m] + k)
+        below = np.searchsorted(np.sort(weighted), weighted)  # films rated strictly lower; ties share a rank
+        out[m] = below / max(m.sum() - 1, 1)
+    return out
 
 
 def embed_query(text):

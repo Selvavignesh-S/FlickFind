@@ -8,7 +8,7 @@ import statistics
 from collections import Counter
 
 
-from backend.catalog import Catalog
+from backend.catalog import NEUTRAL, Catalog
 from backend.understand import query_for
 from builder.common import BUILD
 
@@ -76,7 +76,7 @@ def main():
     this_year = max(y for y in catalog.table["year"].to_pylist() if y)
     lines, all_picks, matched, asked = [], [], 0, 0
     for prompt in PROMPTS:
-        effects, picks = run(catalog, prompt, niche=0.25)
+        effects, picks = run(catalog, prompt, niche=NEUTRAL)
         all_picks += [r for r, _ in picks]
         if effects:
             asked += len(picks)
@@ -92,17 +92,22 @@ def main():
     repeats = [f"{r['title']} ({counts[r['tmdb_id']]}×)" for r in {r["tmdb_id"]: r for r in all_picks}.values()
                if counts[r["tmdb_id"]] >= 3]
     votes = [r["imdb_votes"] for r in all_picks]
+    in_catalog = Counter(catalog.table["group"].to_pylist())
+    in_picks = Counter(r["group"] for r in all_picks)
+    mix = ", ".join(f"{g} {100 * in_picks[g] / len(all_picks):.0f}% vs {100 * n / len(catalog.ids):.0f}%"
+                    for g, n in in_catalog.most_common())
     models = Counter("27B" if "27B" in (r["profile_model"] or "") else "4B" for r in all_picks)
     summary = [
         f"# Catalog quality report: {catalog.version}",
         "",
-        f"{len(catalog.ids):,} films. {len(PROMPTS)} requests × 5 picks for a Normal user (niche 0.25), using the "
+        f"{len(catalog.ids):,} films. {len(PROMPTS)} requests × 5 picks for a new user (no lean), using the "
         "same search as the app. Read each table and ask: would I be happy with these picks?",
         "",
         "| Check | Result | Good looks like |",
         "|---|---|---|",
         f"| Picks with the effect asked for | {matched}/{asked} ({100 * matched / max(asked, 1):.0f}%) | most of them |",
-        f"| Median IMDb votes of picks | {statistics.median(votes):,.0f} | thousands+ for a Normal user |",
+        f"| Median IMDb votes of picks | {statistics.median(votes):,.0f} | not tiny (picks people have seen) |",
+        f"| Language mix of picks vs catalog | {mix} | close to the catalog (no group favoured) |",
         f"| Picks from the last {RECENT} years | {sum((r['year'] or 0) > this_year - RECENT for r in all_picks)}"
         f"/{len(all_picks)} | some, not most |",
         f"| Picks with a 27B profile | {models['27B']}/{len(all_picks)} | grows with each upgrade |",

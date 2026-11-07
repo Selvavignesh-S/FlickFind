@@ -2,7 +2,7 @@ import { Link, usePathname } from "expo-router";
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 
-import { nicheLabel, useAuth } from "../auth";
+import { useAuth } from "../auth";
 import { colors, space } from "../theme";
 import { MAX_WIDTH } from "./FilmGrid";
 
@@ -29,7 +29,7 @@ export function Header() {
     <View style={s.wrap}>
       <View style={s.bar}>
         <Link href="/" style={s.logo} accessibilityLabel="FlickFind, discover">FlickFind</Link>
-        {me && <Text style={s.badge}>{nicheLabel(me.niche)}</Text>}
+        {me && <Text style={s.badge}>{me.taste}</Text>}
         <View style={{ flex: 1 }} />
         {narrow
           ? <Pressable onPress={() => setMenu(!menu)} accessibilityRole="button" accessibilityLabel="Menu" hitSlop={8}>
