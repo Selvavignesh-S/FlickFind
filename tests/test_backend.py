@@ -278,6 +278,8 @@ def test_rules_filter_the_catalog():
     assert ids(c.rules_mask({"countries": ["IN"]})[0]) == [6]  # made in India (in English)
     assert ids(c.rules_mask({"countries": ["IN"], "languages": ["hi", "ta"]})[0]) == []  # both must hold
     assert ids(c.rules_mask({"languages": ["fr"]})[0]) == [2]
+    assert ids(c.rules_mask({"not_countries": ["IN", "US"]})[0]) == [2, 3, 4]  # "no Indian or American films"
+    assert ids(c.rules_mask({"not_languages": ["fr"]})[0]) == [1, 3, 4, 5, 6]
     assert ids(c.rules_mask({"year_from": 1990, "year_to": 1999})[0]) == [1, 6]
     assert ids(c.rules_mask({"max_runtime": 90})[0]) == [2, 6]
     assert ids(c.rules_mask({"genres": ["Comedy"], "animation": True})[0]) == [4]
@@ -305,10 +307,16 @@ def test_references_and_rules_in_recommend(api, monkeypatch):
     base = {"effects": ["tension"], "genres": ["Drama"], "mood_tags": ["tense", "bleak"], "pace": "medium",
             "watch_when": "x", "keywords": ["a", "b", "c"], "synopsis": "y"}
     answers = {
-        "tarantino films": {**base, "rules": {"directors": ["Quentin Tarantino"]}, "like": []},
-        "like alpha": {**base, "rules": {}, "like": [{"title": "Alpha"}, {"title": "Missing Film"}]},
-        "nolan films": {**base, "rules": {"directors": ["Christopher Nolan"]}, "like": []},
-        "a comedy please": {**base, "rules": {"genres": ["Comedy"]}, "like": []},
+        "tarantino films": {**base, "rules": {"directors": ["Quentin Tarantino"]},
+                            "rules_quotes": {"directors": "tarantino"}, "like": []},
+        "like alpha or missing film": {**base, "rules": {}, "like": [{"title": "Alpha"}, {"title": "Missing Film"}]},
+        "nolan films": {**base, "rules": {"directors": ["Christopher Nolan"]},
+                        "rules_quotes": {"directors": "nolan"}, "like": []},
+        "a comedy please": {**base, "rules": {"genres": ["Comedy"]}, "rules_quotes": {"genres": "comedy"}, "like": []},
+        # invented: a director with a quote that isn't in the message, a studio without a quote, a reference film
+        # nobody named; all three are dropped, so this is a plain mood search
+        "something tense": {**base, "rules": {"directors": ["Quentin Tarantino"], "studios": ["A24"]},
+                            "rules_quotes": {"directors": "directed by tarantino"}, "like": [{"title": "Alpha"}]},
     }
     monkeypatch.setattr(understand, "ask_gemini", lambda m, *a: dict(answers[m]))
     monkeypatch.setattr(main, "prepare", understand.prepare)
@@ -318,12 +326,15 @@ def test_references_and_rules_in_recommend(api, monkeypatch):
     assert [f["tmdb_id"] for f in r["films"]] == [1, 5] and r["understood"] == ["directed by Quentin Tarantino"]
     assert ask("tarantino films", "s1")["films"] == []  # Find more: all of his films were shown
 
-    r = ask("like alpha", "s2")
+    r = ask("like alpha or missing film", "s2")
     assert 1 not in [f["tmdb_id"] for f in r["films"]] and len(r["films"]) == 5  # the reference isn't recommended
     assert r["understood"][0] == "like Alpha (1994)" and "Missing Film" in r["notes"][0]
 
     r = ask("nolan films", "s3")
     assert r["films"] == [] and r["notes"] == ["No films directed by Christopher Nolan are in the catalog yet."]
+
+    r = ask("something tense", "s5")
+    assert len(r["films"]) == 5 and r["understood"] == [] and r["notes"] == []
 
     api.put("/me/preferences", json={"genres_avoid": ["Comedy"]})
     assert [f["tmdb_id"] for f in ask("a comedy please", "s4")["films"]] == [1, 4, 6]  # asked by name: shown anyway
@@ -438,6 +449,8 @@ def test_beyond_rules_on_tmdb_cards():
     assert not obeys(c, {"languages": ["ta"]}) and not obeys(c, {"genres": ["Comedy", "Drama"]})
     assert not obeys(c, {"max_runtime": 90}) and not obeys(c, {"documentary": True})
     assert obeys(c, {"studios": ["Bhavana"]}) and not obeys(c, {"actors": ["Mohanlal"]})
+    assert not obeys(c, {"not_countries": ["IN"]}) and not obeys(c, {"not_languages": ["ml"]})
+    assert obeys(c, {"not_countries": ["US"], "not_languages": ["hi"]})
 
 
 def test_beyond_discover_parameters(monkeypatch):
@@ -519,3 +532,23 @@ def test_web_app_routes_fall_back_to_index(tmp_path):
     assert client.get("/").text == "<html>app</html>"
     assert client.get("/watchlist").text == "<html>app</html>"  # an app page, not a file
     assert client.get("/app.js").text == "console.log(1)"
+
+
+def test_rules_must_be_stated_by_the_person():
+    from backend.understand import valid_rules
+    m = "I need a good horror film which has a lot of violence but with good ratings too, please dont recommend indian movies"
+    # a real answer from the AI: India both wanted and ruled out, a runtime and years quoted from unrelated words
+    rules = {"genres": ["Horror"], "countries": ["IN"], "not_countries": ["IN"], "animation": False, "max_runtime": 120,
+             "year_from": 2000, "directors": ["Ari Aster"], "studios": ["A24"], "well_rated": True}
+    quotes = {"genres": "I need a good horror film", "countries": "please dont recommend indian movies",
+              "not_countries": "please dont recommend indian movies", "animation": "please dont recommend indian movies",
+              "max_runtime": "a lot of violence", "year_from": "I need a good horror film", "directors": "horror film",
+              "well_rated": "with good ratings"}
+    kept = {k: v for k, v in valid_rules(rules, quotes, m).items() if v not in (None, [])}
+    assert kept == {"genres": ["Horror"], "not_countries": ["IN"], "well_rated": True}
+    ok = valid_rules({"languages": ["ml"], "countries": ["US"], "year_to": 1999, "max_runtime": 100, "genres": [
+        "Science Fiction"], "animation": False}, {"languages": "malayalam", "countries": "hollywood", "year_to": "90s",
+        "max_runtime": "under 100 minutes", "genres": "sci-fi", "animation": "nothing animated"},
+        "malayalam or hollywood sci-fi from the 90s, under 100 minutes, nothing animated")
+    assert {k: v for k, v in ok.items() if v not in (None, [])} == {"languages": ["ml"], "countries": ["US"],
+        "year_to": 1999, "max_runtime": 100, "genres": ["Science Fiction"], "animation": False}

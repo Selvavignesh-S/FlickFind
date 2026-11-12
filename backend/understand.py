@@ -16,7 +16,7 @@ import os
 import httpx
 import numpy as np
 
-from backend.catalog import embed_query
+from backend.catalog import NAMES, embed_query, words
 from backend.intent import effects_for
 from builder.embed import document
 from builder.vocab import ALL_TAGS, EFFECTS, PACES, TAGS
@@ -27,6 +27,8 @@ GEMINI_MODEL = "gemini-3.5-flash-lite"
 GROQ_MODELS = ["openai/gpt-oss-20b", "openai/gpt-oss-120b"]
 GENRES = ["Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama", "Family", "Fantasy",
           "History", "Horror", "Music", "Mystery", "Romance", "Science Fiction", "TV Movie", "Thriller", "War", "Western"]
+
+RULE_FIELDS = ["directors", "actors", "studios", "countries", "languages", "genres", "not_countries", "not_languages", "not_genres", "year_from", "year_to", "max_runtime", "documentary", "animation", "well_rated"]
 
 SCHEMA = {
     "type": "object",
@@ -45,20 +47,25 @@ SCHEMA = {
             "countries": {"type": "array", "items": {"type": "string"}},  # ISO 3166-1 alpha-2, e.g. "IN"
             "languages": {"type": "array", "items": {"type": "string"}},  # ISO 639-1, e.g. "ml"
             "genres": {"type": "array", "items": {"type": "string", "enum": GENRES}},
+            "not_countries": {"type": "array", "items": {"type": "string"}},  # "no Indian films" -> ["IN"]
+            "not_languages": {"type": "array", "items": {"type": "string"}},
+            "not_genres": {"type": "array", "items": {"type": "string", "enum": GENRES}},
             "year_from": {"type": "integer"},
             "year_to": {"type": "integer"},
             "max_runtime": {"type": "integer"},
             "documentary": {"type": "boolean"},
             "animation": {"type": "boolean"},
+            "well_rated": {"type": "boolean"},
         }},
         "like": {"type": "array", "items": {"type": "object", "properties": {
             "title": {"type": "string"}, "year": {"type": "integer"}}, "required": ["title"]}},
-        "rules_summary": {"type": "string"},
+        # the exact words of the request that state each rule: a rule without them is dropped (see valid_rules)
+        "rules_quotes": {"type": "object", "properties": {f: {"type": "string"} for f in RULE_FIELDS}},
         "clarify": {"type": "object", "properties": {
             "question": {"type": "string"}, "options": {"type": "array", "items": {"type": "string"}}}},
     },
     "required": ["effects", "genres", "mood_tags", "pace", "watch_when", "keywords", "synopsis", "rules", "like",
-                 "rules_summary", "clarify"],
+                 "rules_quotes", "clarify"],
 }
 LIKE_WEIGHT = 0.6  # "films like X": how much the search follows X's own vector vs the imagined film
 
@@ -77,22 +84,27 @@ synopsis: 2 or 3 sentences of an imagined film that would fit them perfectly. Ne
 repeat their wording unless it is about the story itself.
 Respect what they rule out ("not gory", "nothing slow"): leave those qualities out of every field.
 
-rules: hard requirements every result must meet. Fill a field ONLY when the person states that requirement;
-otherwise leave it out (an empty rules object is normal for a mood-only request).
+rules: hard requirements every result must meet. Fill a field ONLY when the person states that requirement in
+their message; otherwise leave it out. An empty rules object is normal: most requests are about a mood. Never add a
+director, actor, studio, country, language, years or runtime they didn't ask for, even if it would suit them.
+rules_quotes: for every rule you fill, the few words of their message that name it, copied exactly, e.g.
+"directors": "directed by tarantino", "not_countries": "dont recommend indian movies". A rule you can't quote from
+their message must stay empty.
 - directors / actors: full names as film databases write them ("tarantino" -> "Quentin Tarantino").
 - studios: production companies they name, as film databases write them ("Ghibli" -> "Studio Ghibli", "A24",
   "Pixar" -> "Pixar", "Marvel" -> "Marvel Studios").
 - A nationality or country ("Indian", "Korean films", "from France"): countries with its ISO code, no languages.
   A named language ("a Malayalam film", "in Japanese"): languages with its ISO 639-1 code, no countries.
 - genres: only genres they ask for by name; every result must have all of them.
+- not_countries / not_languages / not_genres: what they rule out ("no Indian movies" -> not_countries ["IN"],
+  "nothing animated" -> animation false). Something they rule out never goes in countries, languages or genres.
 - year_from / year_to: "the 2010s" -> 2010 and 2019, "after 2015" -> 2016, "old" or "classic" -> year_to 1979,
   "recent" or "new" -> year_from three years before today.
 - max_runtime in minutes ("under 90 minutes", "short" -> 100).
 - documentary / animation: true when they ask for one, false when they rule it out.
-like: films they name as a reference ("like Inception", "similar to Drishyam"), with the year if known. For these,
-still fill every other field to describe what they want.
-rules_summary: the rules in a few plain words for the person to see ("Indian thrillers", "directed by Quentin
-Tarantino", "Malayalam, 2010s"); empty when there are no rules.
+- well_rated: true only when they ask for good ratings, acclaimed, top-rated or the best films.
+like: only films they name themselves as a reference ("like Inception", "similar to Drishyam"), with the year if
+known; never add reference films of your own. For these, still fill every other field to describe what they want.
 clarify: ONLY when the request is too vague to tell what they want the film to do for them ("I'm sad", "something
 good", "a movie for tonight", "bored"), ask one short, warm question with 2 to 4 short answer options, e.g. "I'm sad"
 -> question "Do you want to lift your mood, have a good cry, or sit with the feeling?", options ["Lift my mood",
@@ -143,15 +155,17 @@ def ask(message, system, schema, check):
     return None
 
 
-def valid(plan):
-    """The plan with anything outside the vocabulary dropped, or None if too little is left to search with."""
+def valid(plan, message=""):
+    """The plan with anything outside the vocabulary, and any rule or reference film the message doesn't state,
+    dropped; None if too little is left to search with."""
     plan["effects"] = [e for e in plan.get("effects", []) if e in EFFECTS][:2]
     plan["mood_tags"] = [t for t in dict.fromkeys(plan.get("mood_tags", [])) if t in ALL_TAGS][:6]
     plan["genres"] = [g for g in plan.get("genres", []) if g in GENRES][:3]
     if plan.get("pace") not in PACES:
         plan["pace"] = "medium"
-    plan["rules"] = valid_rules(plan.get("rules") or {})
-    plan["like"] = [x for x in plan.get("like") or [] if isinstance(x, dict) and str(x.get("title", "")).strip()][:3]
+    plan["rules"] = valid_rules(plan.get("rules") or {}, plan.get("rules_quotes") or {}, message)
+    plan["like"] = [x for x in plan.get("like") or [] if isinstance(x, dict) and str(x.get("title", "")).strip()
+                    and named(x["title"], message)][:3]
     c = plan.get("clarify") or {}
     options = [str(o).strip() for o in c.get("options") or [] if str(o).strip()][:4]
     question = str(c.get("question") or "").strip()
@@ -160,14 +174,67 @@ def valid(plan):
     return plan if ok else None
 
 
-def valid_rules(r):
-    """Only well-formed rules survive: a malformed one is dropped rather than filtering out everything."""
+STOP = {"the", "a", "an", "of", "and", "in", "on", "to"}
+NAMES = {**NAMES, **{g: g for g in GENRES}}  # country codes are upper case, language codes lower: no clashes
+ALIASES = {  # words for a country, language or genre that don't start like its English name
+    "US": "american hollywood usa us", "GB": "british uk england english scottish welsh", "FR": "french",
+    "ES": "spanish", "NL": "dutch holland", "CN": "chinese", "DK": "danish", "FI": "finnish", "PL": "polish",
+    "GR": "greek", "CH": "swiss", "IE": "irish", "PH": "filipino", "TH": "thai", "SE": "swedish", "TR": "turkish",
+    "PT": "portuguese", "IL": "israeli", "HK": "hk", "IN": "bollywood tollywood kollywood mollywood sandalwood desi",
+    "SU": "soviet ussr", "zh": "chinese", "cn": "chinese hk", "hi": "bollywood", "te": "tollywood",
+    "ta": "kollywood", "ml": "mollywood", "kn": "sandalwood", "fa": "iranian", "tl": "filipino",
+    "Science Fiction": "sci scifi", "Animation": "anime cartoon cartoons", "Documentary": "docu docs doc",
+    "TV Movie": "tv", "Romance": "romcom romcoms", "Comedy": "romcom romcoms"}
+GENERIC = {"south", "north", "east", "west", "united", "states", "kingdom", "republic", "democratic", "islands",
+           "america", "new", "saint", "movie", "federal", "central", "people", "s"}
+CUES = {  # a year, runtime or yes/no rule's quote must have one of these words (or, for years and runtime, a number)
+    "year_from": "old older classic classics recent new newer latest modern vintage century decade era year years "
+                 "fifties sixties seventies eighties nineties",
+    "max_runtime": "short shorter quick hour hours hr hrs min mins minutes runtime long",
+    "documentary": "docu doc docs documentary documentaries real",
+    "animation": "anime animated animation cartoon cartoons live action pixar ghibli",
+    "well_rated": "rated rating ratings acclaimed best top highly masterpiece masterpieces imdb critically award awards "
+                  "reviews reviewed"}
+CUES["year_to"] = CUES["year_from"]
+NEGATION = {"no", "not", "don", "dont", "never", "without", "avoid", "except", "nothing", "skip", "exclude", "nor"}
+POSITIVE = ("directors", "actors", "studios", "countries", "languages", "genres")
+
+
+def stated(quote, message):
+    """Whether the quote's words appear, in order, in the message (case, accents and punctuation ignored)."""
+    q = words(str(quote or ""))
+    return bool(q) and f" {q} " in f" {words(message)} "
+
+
+def named(name, message, person=False):
+    """Whether the message mentions the name: one distinctive word is enough ("tarantino" names Quentin Tarantino),
+    all of a title's main words for films ("spirited away")."""
+    said = set(words(message).split())
+    keys = [w for w in words(name).split() if w not in STOP and (len(w) > 2 or w.isdigit())] or words(name).split()
+    return bool(keys) and (any if person else all)(w in said for w in keys)
+
+
+def says(quote, value):
+    """Whether the quote names a country or language code, or a genre: a word starting like its English name
+    ("indian" for IN, "thrillers" for Thriller) or a usual alias ("hollywood" for US)."""
+    q = words(quote).split()
+    keys = [w[:5] for w in words(NAMES.get(value, value)).split() if w not in GENERIC]
+    return any(w.startswith(k) for w in q for k in keys) or any(w in ALIASES.get(value, "").split() for w in q)
+
+
+def valid_rules(r, quotes=None, message=None):
+    """Only well-formed rules survive: a malformed one is dropped rather than filtering out everything. With a message,
+    a rule also needs a quote of the message's own words (LLMs fill rule fields the person never asked for: "violent
+    horror" came back as A24, Ari Aster, US/UK, 2010-2025), and each named person or studio must be in the message."""
     names = lambda v: [str(x).strip() for x in v or [] if str(x).strip()][:5]  # noqa: E731
     year = lambda v: v if isinstance(v, int) and 1880 <= v <= 2100 else None  # noqa: E731
     out = {"directors": names(r.get("directors")), "actors": names(r.get("actors")), "studios": names(r.get("studios")),
            "countries": [c.upper() for c in r.get("countries") or [] if isinstance(c, str) and len(c) == 2],
            "languages": [c.lower() for c in r.get("languages") or [] if isinstance(c, str) and len(c) == 2],
            "genres": [g for g in r.get("genres") or [] if g in GENRES],
+           "not_countries": [c.upper() for c in r.get("not_countries") or [] if isinstance(c, str) and len(c) == 2],
+           "not_languages": [c.lower() for c in r.get("not_languages") or [] if isinstance(c, str) and len(c) == 2],
+           "not_genres": [g for g in r.get("not_genres") or [] if g in GENRES],
            "year_from": year(r.get("year_from")), "year_to": year(r.get("year_to"))}
     if out["year_from"] and out["year_to"] and out["year_from"] > out["year_to"]:
         out["year_from"], out["year_to"] = out["year_to"], out["year_from"]
@@ -175,6 +242,25 @@ def valid_rules(r):
     out["max_runtime"] = m if isinstance(m, int) and 30 <= m <= 600 else None
     for f in ("documentary", "animation"):
         out[f] = r[f] if isinstance(r.get(f), bool) else None
+    out["well_rated"] = True if r.get("well_rated") is True else None
+    if message is None:
+        return out
+    for f in RULE_FIELDS:
+        q = str((quotes or {}).get(f) or "")
+        q = q if stated(q, message) else ""
+        if out[f] in (None, []):
+            continue
+        if f in POSITIVE and NEGATION & set(words(q).split()):  # "dont recommend indian movies" is not a wish for them
+            out[f] = []
+        elif f in ("directors", "actors", "studios"):  # names and codes: the message must name each one
+            out[f] = [n for n in out[f] if named(n, message, person=True)]
+        elif isinstance(out[f], list):
+            out[f] = [x for x in out[f] if says(message, x)]
+        else:  # years, runtime, yes/no: the quote must say it
+            number = f in ("year_from", "year_to", "max_runtime") and any(ch.isdigit() for ch in q)
+            out[f] = out[f] if number or set(words(q).split()) & set(CUES[f].split()) else None
+    for f in ("countries", "languages", "genres"):  # both wanted and ruled out: ruled out
+        out[f] = [x for x in out[f] if x not in out["not_" + f]]
     return out
 
 
@@ -187,7 +273,7 @@ def understand(message, about=""):
     """The imagined ideal film for a message (cached), or None when no LLM could answer."""
     key = with_about(message, about)
     if key not in _cache:
-        plan = ask(key, SYSTEM, SCHEMA, valid)
+        plan = ask(key, SYSTEM, SCHEMA, lambda answer: valid(answer, message))
         if plan is None:
             return None
         _cache[key] = plan
@@ -207,8 +293,7 @@ def prepare(catalog, message, about=""):
                     ", ".join(map(str, plan["keywords"])), plan["synopsis"])
     query = embed_query(text)
     allowed, applied, notes = catalog.rules_mask(plan["rules"])
-    summary = str(plan.get("rules_summary") or "").strip()
-    understood = [summary] if summary and applied else applied  # plain words if the AI gave them, else the raw rules
+    understood = applied  # only rules that survived validation (an AI-written summary could mention dropped ones)
 
     like, exclude = [], []
     for ref in plan["like"]:

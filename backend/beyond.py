@@ -20,6 +20,7 @@ GENRE_IDS = {"Action": 28, "Adventure": 12, "Animation": 16, "Comedy": 35, "Crim
              "Family": 10751, "Fantasy": 14, "History": 36, "Horror": 27, "Music": 10402, "Mystery": 9648,
              "Romance": 10749, "Science Fiction": 878, "TV Movie": 10770, "Thriller": 53, "War": 10752, "Western": 37}
 PER_SOURCE = 12  # films taken from each source
+WELL_RATED = 6.5  # TMDB average for "good ratings" (catalog films use their rank within their language instead)
 MIN_RUNTIME = 60  # same as the catalog: no shorts
 found = {}  # tmdb_id -> card for films found beyond the catalog while the server runs (so library actions work)
 
@@ -57,7 +58,7 @@ def discover(rules):
     if rules.get("countries"):
         p["with_origin_country"] = "|".join(rules["countries"])
     genres = [GENRE_IDS[g] for g in rules.get("genres") or [] if g in GENRE_IDS]
-    without = []
+    without = [GENRE_IDS[g] for g in rules.get("not_genres") or [] if g in GENRE_IDS]
     for field, gid in (("documentary", 99), ("animation", 16)):
         if rules.get(field) is True:
             genres.append(gid)
@@ -73,6 +74,8 @@ def discover(rules):
         p["primary_release_date.lte"] = f"{rules['year_to']}-12-31"
     if rules.get("max_runtime"):
         p["with_runtime.lte"] = rules["max_runtime"]
+    if rules.get("well_rated"):
+        p["vote_average.gte"] = WELL_RATED
     for field, key, path in (("directors", "with_crew", "/search/person"), ("actors", "with_cast", "/search/person"),
                              ("studios", "with_companies", "/search/company")):
         ids = [i for i in (first_id(path, n) for n in rules.get(field) or []) if i]
@@ -138,7 +141,7 @@ def card(tmdb_id):
         "cast": [c["name"] for c in sorted(cast, key=lambda c: c.get("order", 99))[:5]], "providers_in": [],
         "countries": [c["iso_3166_1"] for c in d.get("production_countries", [])],
         "companies": [c["name"] for c in d.get("production_companies", [])],
-        "documentary": 99 in genre_ids, "animation": 16 in genre_ids,
+        "documentary": 99 in genre_ids, "animation": 16 in genre_ids, "tmdb_vote": d.get("vote_average"),
         "mood_tags": [], "effect": "", "pace": "", "intensity": None, "watch_when": "", "obscurity": 0.5,
         "beyond": True,
     }
@@ -157,11 +160,17 @@ def obeys(c, rules):
         return False
     if rules.get("genres") and not set(rules["genres"]) <= set(c["genres"]):
         return False
+    if set(rules.get("not_countries") or []) & set(c["countries"]) or c["language"] in (rules.get("not_languages") or []):
+        return False
+    if set(rules.get("not_genres") or []) & set(c["genres"]):
+        return False
     if rules.get("year_from") and c["year"] < rules["year_from"]:
         return False
     if rules.get("year_to") and c["year"] > rules["year_to"]:
         return False
     if rules.get("max_runtime") and (c["runtime"] or 0) > rules["max_runtime"]:
+        return False
+    if rules.get("well_rated") and (c.get("tmdb_vote") or 0) < WELL_RATED:
         return False
     return all(rules.get(f) is None or c[f] == rules[f] for f in ("documentary", "animation"))
 

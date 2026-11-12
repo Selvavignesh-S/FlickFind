@@ -3,6 +3,7 @@ import json
 import re
 import unicodedata
 from collections import defaultdict
+from pathlib import Path
 
 import numpy as np
 import pyarrow as pa
@@ -12,6 +13,9 @@ from builder import embed
 from builder.common import BUILD
 
 POSTER = "https://image.tmdb.org/t/p/w342"
+# English names of TMDB's country (upper case) and language (lower case) codes, from its /configuration endpoints
+NAMES = {k: v for d in json.loads((Path(__file__).parent / "names.json").read_text()).values() for k, v in d.items()}
+WELL_RATED = 0.6     # "good ratings": the top 40% of films in their own language (see quality)
 # Ranking: mood fit decides; quality and the user's own lean only reorder films that already fit (no language or
 # popularity edge for a new user). Weights are on the scale of mood similarity; tune with builder/quality.py.
 EFFECT_BONUS = 0.06  # film has the effect the message asks for
@@ -107,12 +111,22 @@ class Catalog:
             ok &= hit
             if found:
                 applied.append(f"{label} {' or '.join(sorted(set(found)))}")
+        named = lambda codes: " or ".join(sorted(NAMES.get(c, c) for c in codes))  # noqa: E731
         if countries := set(rules.get("countries") or []):
             ok &= np.array([not countries.isdisjoint(c) for c in self.countries])
-            applied.append("made in " + ", ".join(sorted(countries)))
+            applied.append("made in " + named(countries))
         if languages := set(rules.get("languages") or []):
             ok &= np.isin(self.language, list(languages))
-            applied.append("in " + ", ".join(sorted(languages)))
+            applied.append("in " + named(languages))
+        if not_c := set(rules.get("not_countries") or []):
+            ok &= np.array([not_c.isdisjoint(c) for c in self.countries])
+            applied.append("not made in " + named(not_c))
+        if not_l := set(rules.get("not_languages") or []):
+            ok &= ~np.isin(self.language, list(not_l))
+            applied.append("not in " + named(not_l))
+        if not_g := set(rules.get("not_genres") or []):
+            ok &= np.array([not_g.isdisjoint(g) for g in self.genres])
+            applied.append("no " + " / ".join(sorted(not_g)))
         if genres := set(rules.get("genres") or []):
             ok &= np.array([genres <= set(g) for g in self.genres])
             applied.append("genre " + " + ".join(sorted(genres)))
@@ -125,6 +139,9 @@ class Catalog:
         if m := rules.get("max_runtime"):
             ok &= (self.runtime > 0) & (self.runtime <= m)
             applied.append(f"under {m} min")
+        if rules.get("well_rated"):
+            ok &= self.quality >= WELL_RATED
+            applied.append("well rated")
         for field, column in (("documentary", self.documentary), ("animation", self.animation)):
             if rules.get(field) is not None:
                 ok &= column == bool(rules[field])
