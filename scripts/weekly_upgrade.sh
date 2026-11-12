@@ -10,7 +10,7 @@ PER_RUN=10500  # films per Kaggle run: ~0.29 films/s on 2x T4 = ~10 h
 exec >> "$BUILD/weekly.log" 2>&1
 echo "== $(date '+%F %T') weekly 27B upgrade"
 
-left=$(uv run --env-file .env kaggle quota 2>/dev/null | awk '/^GPU/{gsub("h","",$4); print int($4)}')
+left=$(uv run --env-file .env kaggle quota 2>/dev/null | awk '/^GPU/{gsub("h","",$3); print int($3)}')
 runs=$(( ${left:-0} >= 22 ? 2 : ${left:-0} >= 11 ? 1 : 0 ))
 if [ "$runs" -eq 0 ]; then echo "only ${left:-?} GPU hours left this week; skipping"; exit 0; fi
 echo "GPU hours left: $left -> $runs run(s) of $PER_RUN films"
