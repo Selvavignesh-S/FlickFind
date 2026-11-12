@@ -320,9 +320,9 @@ def recommend(body: Ask, user=Depends(current_user), con=Depends(get_db), catalo
     seen = [i for i, _ in hits] if checked else [c["tmdb_id"] for c in picks]
     con.executemany("INSERT OR IGNORE INTO shown (user_id, session, tmdb_id) VALUES (?, ?, ?)",
                     [(user["id"], body.session, i) for i in seen])
-    notes = plan["notes"] + ([] if picks or not hits else
-                             ["None of the closest matches fit well enough. Find more looks further."])
-    return {"films": with_state(picks, user["id"], con, fetch_rt=False), "understood": plan["understood"], "notes": notes,
+    # no picks: the app offers Find more and the web search itself, so no note is needed
+    return {"films": with_state(picks, user["id"], con, fetch_rt=False), "understood": plan["understood"],
+            "notes": plan["notes"],
             "more": bool(hits), "question": None, "options": []}
 
 

@@ -16,6 +16,7 @@ interface Turn {
   question?: string | null; options?: string[]; // a clarifying question, when the request was too vague
   noQuestions?: boolean; // "Just show me something": search with the best guess, ask nothing
   beyond?: "busy" | "done"; // the search past the catalog (TMDB + the web), run on request
+  empty?: boolean; // the last round found nothing in the catalog that fits well enough
 }
 interface Answer {
   films: Film[]; understood: string[]; notes: string[]; more: boolean; question: string | null; options: string[];
@@ -50,7 +51,8 @@ export default function Discover() {
     try {
       const a = await api<Answer>("/recommend", "POST", { message, session, clarify: !noQuestions });
       setTurns((ts) => ts.map((t, n) => (n === i ? { ...t, busy: false, films: [...t.films, ...a.films],
-        done: !a.question && !a.more, understood: a.understood, notes: a.notes, question: a.question,
+        done: !a.question && !a.more, empty: !a.question && a.films.length === 0, understood: a.understood,
+        notes: a.notes, question: a.question,
         options: a.options } : t)));
     } catch (e) {
       update(i, { busy: false, error: (e as Error).message });
@@ -147,20 +149,39 @@ export default function Discover() {
                   </View>
                 )}
                 {t.error && <View style={s.note}><T v="caption" style={{ color: colors.white }}>{t.error}</T></View>}
-                {t.done && !t.question && !t.beyond && !(t.films.length === 0 && t.notes?.length) && (
-                  <T v="caption">
-                    {t.films.length ? "That's every film in the catalog that fits this request."
-                      : "Nothing in the catalog fits this request."}
-                  </T>
+                {!t.busy && !t.question && !t.beyond && (t.empty || t.done) && (
+                  <Card style={{ gap: space(1.5), maxWidth: 640 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: space(1) }}>
+                      <Ionicons name="globe-outline" size={16} color={colors.mist} />
+                      <T v="eyebrow">Search the whole web</T>
+                    </View>
+                    <T v="subheading">
+                      {!t.done ? "None of the closest films in the catalog fit well enough."
+                        : t.films.length ? "That's every film in the catalog that fits."
+                        : "Nothing in the catalog fits this request."}
+                    </T>
+                    <T v="caption">
+                      Search the web looks past FlickFind's catalog: it reads film lists, reviews and articles from
+                      across the web, plus TMDB's full database, and checks every film it finds against your request.
+                      It takes about 10 seconds.
+                    </T>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space(1) }}>
+                      <Button kind="primary" icon="globe-outline" label="Search the web"
+                        onPress={() => searchBeyond(i, t.message)} />
+                      {!t.done && i === turns.length - 1 && (
+                        <Button icon="refresh" label="Find more in the catalog"
+                          onPress={() => fetchFilms(i, t.message, t.noQuestions)} />
+                      )}
+                    </View>
+                  </Card>
                 )}
-                {t.done && !t.busy && !t.question && !t.beyond && (
-                  <View style={{ alignSelf: "flex-start" }}>
-                    <Button icon="globe-outline" label="Search beyond the catalog" onPress={() => searchBeyond(i, t.message)} />
-                  </View>
-                )}
-                {!t.busy && !t.done && !t.question && i === turns.length - 1 && (
-                  <View style={{ alignSelf: "flex-start" }}>
+                {!t.busy && !t.done && !t.empty && !t.question && t.beyond !== "busy" && i === turns.length - 1 && (
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space(1), alignSelf: "flex-start" }}>
                     <Button icon="refresh" label="Find more" onPress={() => fetchFilms(i, t.message, t.noQuestions)} />
+                    {!t.beyond && (
+                      <Button kind="quiet" icon="globe-outline" label="Search the web"
+                        onPress={() => searchBeyond(i, t.message)} />
+                    )}
                   </View>
                 )}
               </View>
